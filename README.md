@@ -84,6 +84,29 @@ the autopilot engaged) can be copied into the simulator's
 session by re-engaging and confirming the autopilot; the
 `sim/operation/reset_flight` command recovers a lost flight.
 
+### Autopilot MCP server
+
+`xplane-api-mcp` exposes the autopilot panel to MCP agent runtimes over
+stdio. Install the optional extra first: `python -m pip install -e ".[mcp]"`.
+The server is **read-only by default** (`read_autopilot_state`,
+`wait_for_state`); launching with `--allow-control` additionally registers
+`press_button` and `set_selector` and constructs the write-capable client —
+a read-only launch structurally cannot transmit control traffic. Connection
+is explicit and fails fast at launch: give `--host`/`--port` or
+`--discover-timeout-seconds` for beacon discovery, plus the required
+`--frequency-hz` subscription rate.
+
+```sh
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5                  # read-only
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-control  # with control
+```
+
+Tool schemas carry the button/selector enums, units, and ranges; tool
+descriptions embed the operating contract (inputs are requests, annunciated
+state is truth), the verified C172 G1000 caveats, and the session-safety
+rule. The server serves one local agent runtime and one simulator and is
+simulation tooling, not certified avionics.
+
 ## JSON Lines and playback
 
 Use `write_jsonl(stream, state)` to write one schema-versioned state record per line and `iter_jsonl(stream)` to read records. `JsonlPlayback` provides a deterministic pull cursor. `next_sample()` is non-blocking; `next_sample_realtime()` waits for the recorded intervals at 1× and responds to pause/stop from another thread. `GroundTrackDeriver(minimum_movement_m=...)` adds a `ground_track_deg` value after it has a valid position baseline and sufficient movement; the threshold is required because it depends on accepted GPS noise and downstream needs.

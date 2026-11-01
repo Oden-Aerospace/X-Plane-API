@@ -74,6 +74,7 @@ class AfcsButton(str, Enum):
     FLC = "FLC"
     VNV = "VNV"
     GA = "GA"
+    GS = "GS"
 
 
 class AfcsSelector(str, Enum):

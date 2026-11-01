@@ -154,7 +154,7 @@ class ModeVocabularyTests(unittest.TestCase):
             names,
             {
                 "AP", "AP_DISC", "FD", "YD", "HDG", "ROL", "NAV",
-                "APR", "BC", "ALT", "VS", "FLC", "VNV", "GA",
+                "APR", "BC", "ALT", "VS", "FLC", "VNV", "GA", "GS",
             },
         )
 

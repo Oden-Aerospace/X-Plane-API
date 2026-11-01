@@ -100,6 +100,7 @@ class ButtonTests(unittest.TestCase):
             AfcsButton.FLC: panel.press_flc,
             AfcsButton.VNV: panel.press_vnv,
             AfcsButton.GA: panel.press_ga,
+            AfcsButton.GS: panel.press_gs,
         }
         self.assertEqual(set(method_by_button), set(AfcsButton))
 

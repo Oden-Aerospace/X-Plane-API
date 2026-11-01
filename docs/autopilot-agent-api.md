@@ -4,6 +4,12 @@ Self-contained reference for operating the simulated X-Plane 12 autopilot
 through `xplane_api`. It is written so an AI agent can read state, send
 inputs, and validate results without reading package source code.
 
+Agents running in MCP tool runtimes can use the `xplane-api-mcp` server
+instead (optional `mcp` extra; read-only by default, control via
+`--allow-control`): its four tools mirror this reference and carry the same
+contract in their schemas and descriptions. The rest of this document is for
+agents calling the Python API directly.
+
 Verified against X-Plane 12.4.3 with the included Cessna 172 G1000. This is
 simulation tooling, not certified avionics; it does not model any specific
 real AFCS product.
@@ -157,11 +163,12 @@ All button methods take no arguments and return nothing:
 | `panel.press_flc()` | FLC | Flight-level-change mode |
 | `panel.press_vnv()` | VNV | Arm/select VNAV path |
 | `panel.press_ga()` | GA | Takeoff/go-around |
+| `panel.press_gs()` | GS | Toggle the glideslope arm — the verified way to disarm an armed approach glideslope |
 
 Generic form (same behavior, string-friendly): `panel.press_button("HDG")`
 with any `AfcsButton` value: `AP`, `AP_DISC`, `FD`, `YD`, `HDG`, `ROL`,
-`NAV`, `APR`, `BC`, `ALT`, `VS`, `FLC`, `VNV`, `GA`. Unknown names raise
-`ValueError` and send nothing.
+`NAV`, `APR`, `BC`, `ALT`, `VS`, `FLC`, `VNV`, `GA`, `GS`. Unknown names
+raise `ValueError` and send nothing.
 
 Buttons behave like the real panel: pressing a mode button again usually
 cancels that mode; pressing `APR` with no usable approach source changes
@@ -183,6 +190,16 @@ nothing. The read-back tells you which happened.
 - Pressing a button whose mode is already active toggles it off (e.g.,
   HDG active + `press_hdg()` reverts to ROL; ALT active + `press_alt()`
   reverts to PIT). Check current state before pressing.
+- **Armed-mode masking:** several vertical modes can be armed at once
+  (e.g., GS and ALTS during an armed approach). The single
+  `vertical_mode_armed` field reports the highest-precedence one
+  (GS outranks ALTS); check `raw_status_values`
+  (e.g., `sim/cockpit2/autopilot/alts_armed`) to see the full armed set.
+- **APR re-press does not disarm (verified):** with an approach armed,
+  pressing APR again does not clear the GS arm and drops the active
+  lateral mode to ROL. To disarm an armed glideslope, use `press_gs()`
+  (verified), then restore your lateral mode (e.g., HDG) and confirm via
+  read-back.
 
 ### Selectors (value inputs with strict ranges)
 

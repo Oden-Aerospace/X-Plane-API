@@ -11,9 +11,11 @@ dependencies = ["geographiclib==2.1"]
 
 [project.optional-dependencies]
 adsb-test = ["pyModeS==3.6.0; python_version >= '3.11'"]
+mcp = ["mcp>=2.3"]
 
 [project.scripts]
 xplane-api-web = "xplane_api.web:main"
+xplane-api-mcp = "xplane_api.mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

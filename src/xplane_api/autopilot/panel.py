@@ -44,6 +44,9 @@ BUTTON_COMMANDS: dict[AfcsButton, str] = {
     AfcsButton.FLC: "sim/autopilot/level_change",
     AfcsButton.VNV: "sim/autopilot/vnav",
     AfcsButton.GA: "sim/autopilot/take_off_go_around",
+    # Toggles the glideslope arm; the only verified way to disarm an armed
+    # approach GS (APR re-press does not clear it; 2026-11-01 evaluation).
+    AfcsButton.GS: "sim/autopilot/glide_slope",
 }
 
 # Selector -> (writable dataref, minimum, maximum, maximum is exclusive).
@@ -187,6 +190,14 @@ class AutopilotPanel:
     def press_ga(self) -> None:
         """Select takeoff/go-around mode (GA/TOGA input)."""
         self.press_button(AfcsButton.GA)
+
+    def press_gs(self) -> None:
+        """Toggle the glideslope arm (GS input).
+
+        The verified way to disarm an armed approach glideslope on the
+        C172 G1000; re-pressing APR does not clear it.
+        """
+        self.press_button(AfcsButton.GS)
 
     # -- Target selectors (value inputs with explicit ranges) --------------
 
