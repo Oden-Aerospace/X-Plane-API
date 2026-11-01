@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Navigation MFD | Flight Deck</title>
+  <link rel="stylesheet" href="/static/leaflet/leaflet.css">
+  <style>
+    :root { color-scheme: dark; font-family: "DIN Alternate", "Arial Narrow", monospace; color: #edf2f2; background: #101413; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100svh; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
+    header { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #46514c; background: #202824; }
+    h1 { font-size: 19px; margin: 0; letter-spacing: 0; }
+    header a { margin-left: auto; color: #99dec2; font-size: 13px; }
+    .status { font-size: 12px; color: #ffcd67; }
+    .status.valid { color: #9ee8bf; }
+    .toolbar { padding: 9px 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; background: #151c18; border-bottom: 1px solid #46514c; }
+    button, select, input { font: inherit; }
+    button, select { background: #2a3630; border: 1px solid #66776d; color: #fff; padding: 7px 10px; border-radius: 3px; cursor: pointer; }
+    button:hover { background: #3a4b41; }
+    button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible, #map:focus-visible { outline: 2px solid #ffcd67; outline-offset: 3px; }
+    label { display: inline-flex; gap: 5px; align-items: center; font-size: 13px; }
+    input[type=checkbox] { accent-color: #9ee8bf; width: 16px; height: 16px; }
+    .range { display: flex; align-items: center; gap: 5px; }
+    .range button { width: 34px; height: 34px; padding: 0; font-size: 20px; }
+    .layers { display: flex; flex-wrap: wrap; gap: 10px; }
+    .layers label:has(input:disabled) { color: #89978f; }
+    main { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+    .map-area { position: relative; min-width: 0; min-height: 320px; }
+    #map { width: 100%; height: 100%; background: #111a16; }
+    .map-readout { position: absolute; z-index: 450; top: 10px; left: 10px; right: 10px; display: flex; align-items: start; justify-content: space-between; gap: 10px; pointer-events: none; }
+    .map-readout span { background: #101713e8; padding: 6px 8px; border: 1px solid #506154; font-size: 12px; max-width: 85%; }
+    #mapMessage { color: #ffcd67; white-space: pre-line; overflow-wrap: anywhere; }
+    .map-scale { position: absolute; z-index: 450; left: 12px; bottom: 12px; background: #101713e8; padding: 5px; font-size: 11px; }
+    .map-scale i { display: block; border: 1px solid #fff; border-top: 0; height: 6px; margin-top: 3px; }
+    [hidden] { display: none !important; }
+    aside { border-left: 1px solid #46514c; overflow-y: auto; min-width: 0; background: #19201c; }
+    aside section, aside details { padding: 14px; border-bottom: 1px solid #46514c; }
+    h2, summary { font-size: 13px; letter-spacing: 0; margin: 0 0 10px; font-weight: bold; }
+    summary { cursor: pointer; }
+    .telemetry { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .telemetry dt { font-size: 11px; color: #a4b6aa; }
+    .telemetry dd { margin: 4px 0 0; font-size: 16px; }
+    dl { margin: 0; }
+    p { margin: 6px 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+    .nearest { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+    .nearest button { width: 100%; text-align: left; font-size: 12px; display: flex; gap: 8px; justify-content: space-between; }
+    .nearest button span { overflow-wrap: anywhere; }
+    #detail dl dt { color: #a4b6aa; font-size: 11px; margin-top: 9px; }
+    #detail dl dd { margin: 3px 0; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .layer-meta { border-top: 1px solid #46514c; padding: 9px 0; }
+    .layer-meta strong { color: #9ee8bf; font-size: 12px; }
+    .safety { color: #a4b6aa; font-size: 10px; }
+    .aircraft-icon { background: none; border: none; }
+    .aircraft-icon svg { width: 32px; height: 32px; filter: drop-shadow(0 1px 2px #000); }
+    .map-label.leaflet-tooltip { background: #111a16e8; border: 0; color: #d3f0de; box-shadow: none; padding: 2px 4px; font: 11px monospace; }
+    .map-label.leaflet-tooltip::before { display: none; }
+    .leaflet-control-attribution { background: #141d17 !important; color: #a4b6aa; }
+    .leaflet-control-attribution a { color: #9ee8bf; }
+    @media (max-width: 700px) {
+      body { height: auto; min-height: 100svh; }
+      header, .toolbar { padding: 10px; }
+      main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(360px, 58svh) auto; }
+      aside { border-left: 0; border-top: 1px solid #46514c; overflow: visible; }
+      #map { min-height: 360px; }
+      #sourceStatus { flex-basis: 100%; order: 2; }
+    }
+  </style>
+</head>
+<body>
+  <header><h1>NAVIGATION MFD</h1><span id="sourceStatus" class="status">NO POSITION</span><a href="/">Dashboard</a></header>
+  <div class="toolbar" aria-label="Map controls">
+    <div class="range"><button id="zoomIn" aria-label="Decrease map range" title="Decrease map range">+</button><label for="range">Range</label><select id="range"><option>2</option><option>5</option><option>10</option><option selected>20</option><option>50</option><option>100</option></select><span>NM</span><button id="zoomOut" aria-label="Increase map range" title="Increase map range">-</button></div>
+    <label><input id="follow" type="checkbox" checked>Follow</label><button id="recenter">Recenter</button>
+    <div class="layers" aria-label="Map layers"><label><input type="checkbox" id="layer-airports" checked>Airports</label><label><input type="checkbox" id="layer-navaids">Navaids</label><label><input type="checkbox" id="layer-fixes">Fixes</label><label><input type="checkbox" id="layer-airspace" checked>Airspace</label></div>
+  </div>
+  <main>
+    <section class="map-area" aria-label="Navigation map"><div id="map" tabindex="0" role="application" aria-label="Navigation map; arrow keys pan, plus and minus change range"></div><div class="map-readout"><span id="mapMessage">POSITION UNAVAILABLE</span><span aria-label="True north">N &#8593;</span></div><div class="map-scale" id="scale" hidden><span id="scaleLabel"></span><i id="scaleBar"></i></div></section>
+    <aside aria-label="MFD information">
+      <section><h2>OWN AIRCRAFT</h2><dl class="telemetry"><div><dt>POSITION</dt><dd id="position">--</dd></div><div><dt>TRUE HEADING</dt><dd id="heading">--</dd></div><div><dt>GROUND TRACK</dt><dd id="track">--</dd></div><div><dt>GROUND SPEED / KT</dt><dd id="speed">--</dd></div></dl></section>
+      <section><h2>NEAREST AIRPORTS / 100 NM</h2><p id="nearestStatus">POSITION UNAVAILABLE</p><ol class="nearest" id="nearest"></ol></section>
+      <section id="detail"><h2>FEATURE DETAILS</h2><p id="detailStatus">NO SELECTION</p><dl id="detailFields"></dl></section>
+      <details open><summary>AVIATION DATA</summary><p id="provider">XPLANE / UNAVAILABLE</p><p id="dataError" class="status"></p><button id="reload">Reload data</button><div id="layerMetadata"></div><p class="safety">SIMULATION ONLY. Data may be incomplete or out of date. Airspace activation and flight permissions are not established by this display.</p><a class="safety" href="/static/leaflet/LICENSE">Map library license</a></details>
+    </aside>
+  </main>
+  <script src="/static/leaflet/leaflet.js"></script>
+  <script>
+    const ranges = [2, 5, 10, 20, 50, 100];
+    const layerNames = ['airports', 'navaids', 'fixes', 'airspace'];
+    const projectionLimit = 85.05112878;
+    function validField(state, field) { return state?.field_status?.[field] === 'valid' && Number.isFinite(state[field]); }
+    function wrapLongitude(longitude) { return ((longitude + 180) % 360 + 360) % 360 - 180; }
+    function flightView(data) {
+      const sourceFailed = data?.status === 'error';
+      const state = sourceFailed ? null : data?.state;
+      const statuses = ['latitude_deg', 'longitude_deg'].map(field => state?.field_status?.[field] || 'unavailable');
+      const valid = validField(state, 'latitude_deg') && validField(state, 'longitude_deg') && Math.abs(state.latitude_deg) <= 90 && Math.abs(state.longitude_deg) <= 180;
+      return {
+        position: valid ? [state.latitude_deg, state.longitude_deg] : null,
+        status: sourceFailed ? 'error' : valid ? 'valid' : statuses.includes('invalid') ? 'invalid' : statuses.includes('stale') ? 'stale' : 'unavailable',
+        heading: validField(state, 'true_heading_deg') ? ((state.true_heading_deg % 360) + 360) % 360 : null,
+        track: validField(state, 'ground_track_deg') ? ((state.ground_track_deg % 360) + 360) % 360 : null,
+        speed: validField(state, 'ground_speed_mps') ? state.ground_speed_mps * 1.9438444924406 : null,
+        projectionLimited: valid && Math.abs(state.latitude_deg) > projectionLimit,
+      };
+    }
+    function unwrapLine(coordinates, centerLongitude) {
+      let previous = centerLongitude;
+      return coordinates.map(coordinate => {
+        const longitude = previous + wrapLongitude(coordinate[0] - previous);
+        previous = longitude;
+        return [longitude, coordinate[1], ...coordinate.slice(2)];
+      });
+    }
+    function mapFeature(feature, longitude) {
+      const geometry = feature.geometry;
+      let coordinates;
+      if (geometry.type === 'Point') coordinates = unwrapLine([geometry.coordinates], longitude)[0];
+      else if (geometry.type === 'Polygon') coordinates = geometry.coordinates.map(ring => unwrapLine(ring, longitude));
+      else if (geometry.type === 'MultiPolygon') coordinates = geometry.coordinates.map(polygon => polygon.map(ring => unwrapLine(ring, longitude)));
+      else coordinates = unwrapLine(geometry.coordinates, longitude);
+      return {...feature, geometry: {...geometry, coordinates}};
+    }
+    function airportLabelIds(features, range, center) {
+      const budget = range <= 2 ? 30 : range <= 5 ? 20 : range <= 10 ? 12 : range <= 20 ? 8 : range <= 50 ? 3 : 0;
+      const candidates = features.filter(feature => feature.properties.layer === 'airports' && feature.geometry.type === 'Point')
+        .map(feature => {
+          const [longitude, latitude] = feature.geometry.coordinates;
+          const runwayLength = Math.max(0, ...(feature.properties.runways || []).map(runway => runway.length_m || 0));
+          const deltaLongitude = wrapLongitude(longitude - center.lng) * Math.cos(center.lat * Math.PI / 180);
+          return {id: feature.id, runwayLength, distance: deltaLongitude ** 2 + (latitude - center.lat) ** 2};
+        }).sort((left, right) => right.runwayLength - left.runwayLength || left.distance - right.distance || left.id.localeCompare(right.id));
+      return new Set(candidates.slice(0, budget).map(candidate => candidate.id));
+    }
+    const map = L.map('map', {zoomControl: false, keyboard: false, scrollWheelZoom: false, doubleClickZoom: false, touchZoom: false, boxZoom: false,
+      zoomSnap: 0, minZoom: 2, maxZoom: 18, inertia: false, worldCopyJump: true, fadeAnimation: false}).setView([0, 0], 5);
+    const geography = L.layerGroup().addTo(map);
+    const grid = L.layerGroup().addTo(map);
+    const follow = document.getElementById('follow');
+    let ownship = null;
+    let ownshipKind = null;
+    let currentFlight = null;
+    let firstPosition = true;
+    let metadata = null;
+    let featureController = null;
+    let queryTimer = null;
+    let rangeRequest = 0;
+    let rangeApplying = false;
+    let positionGeneration = 0;
+    let lastNearest = 0;
+    let nearestBusy = false;
+    let pollBusy = false;
+    let warning = '';
+    let rangeWarning = '';
+    let geometryKey = null;
+    let featureViewportKey = null;
+    let forceFeatureRefresh = false;
+    function text(id, value) { document.getElementById(id).textContent = value; }
+    function statusMessage() {
+      const position = currentFlight?.position ? currentFlight.projectionLimited ? 'POSITION VALID / OUTSIDE MAP LATITUDE' : '' : `POSITION ${(currentFlight?.status || 'unavailable').toUpperCase()}`;
+      text('mapMessage', [position, rangeWarning, warning].filter(Boolean).join('\n') || `${document.getElementById('range').value} NM / NORTH UP`);
+    }
+    async function json(path, options) {
+      const response = await fetch(path, {cache: 'no-store', ...options});
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      return body;
+    }
+    function sameDataset(data) { return data.imported_at === metadata?.active?.imported_at; }
+    function drawGrid() {
+      grid.clearLayers();
+      const bounds = map.getBounds();
+      const south = Math.max(-85, bounds.getSouth()), north = Math.min(85, bounds.getNorth());
+      const step = map.getZoom() > 8 ? .1 : map.getZoom() > 5 ? 1 : 10;
+      const west = bounds.getWest(), east = bounds.getEast();
+      const style = {color: '#526b58', weight: 1, opacity: .24, interactive: false};
+      for (let latitude = Math.ceil(south / step) * step, count = 0; latitude <= north && count < 30; latitude += step, count++) L.polyline([[latitude, west], [latitude, east]], style).addTo(grid);
+      for (let longitude = Math.ceil(west / step) * step, count = 0; longitude <= east && count < 30; longitude += step, count++) L.polyline([[south, longitude], [north, longitude]], style).addTo(grid);
+    }
+    function showDetails(feature) {
+      const properties = feature.properties;
+      text('detailStatus', `${properties.ident || properties.name || feature.id}`);
+      const fields = document.getElementById('detailFields');
+      fields.replaceChildren();
+      function field(label, value) {
+        const term = document.createElement('dt'), description = document.createElement('dd');
+        term.textContent = label;
+        description.textContent = value == null || value === '' ? 'Unavailable' : String(value);
+        fields.append(term, description);
+      }
+      field('NAME', properties.name);
+      if (properties.layer === 'airspace') {
+        field('CLASS / TYPE', properties.class);
+        field('FLOOR', [properties.floor, properties.floor_unit, properties.floor_reference].filter(value => value != null).join(' '));
+        field('CEILING', [properties.ceiling, properties.ceiling_unit, properties.ceiling_reference].filter(value => value != null).join(' '));
+        if (properties.geometry_note) field('GEOMETRY', properties.geometry_note);
+      } else if (properties.layer === 'airports') {
+        field('ELEVATION / FT', properties.elevation_ft);
+        if (properties.position_source) field('POSITION SOURCE', properties.position_source);
+        for (const runway of properties.runways || []) field(`RUNWAY ${(runway.identifiers || []).join(' / ')}`,
+          `${runway.length_m == null ? '--' : Math.round(runway.length_m)} x ${runway.width_m == null ? '--' : Math.round(runway.width_m)} m / ${runway.surface || 'surface unavailable'}${runway.closed ? ' / CLOSED' : ''}`);
+        if (!properties.runways?.length) field('RUNWAYS', null);
+        for (const frequency of properties.frequencies || []) field(frequency.description || 'FREQUENCY', frequency.frequency_mhz == null ? null : `${frequency.frequency_mhz.toFixed(3)} MHz`);
+        if (!properties.frequencies?.length) field('FREQUENCIES', null);
+      } else {
+        field('TYPE', properties.kind || properties.layer);
+        if (properties.frequency != null) field('FREQUENCY', `${properties.frequency} ${properties.frequency_unit || ''}`);
+      }
+      field('DATA PROVIDER', metadata?.active?.provider);
+      if (properties.source_properties) field('SOURCE ATTRIBUTES', JSON.stringify(properties.source_properties, null, 2));
+    }
+    async function selectFeature(identifier, pan = false) {
+      try {
+        const result = await json(`/api/aviation/detail?id=${encodeURIComponent(identifier)}`);
+        if (!sameDataset(result)) { await loadMetadata(); return; }
+        showDetails(result.feature);
+        if (pan && result.feature.geometry.type === 'Point') {
+          follow.checked = false;
+          const [longitude, latitude] = result.feature.geometry.coordinates;
+          map.panTo([latitude, longitude], {animate: false});
+        }
+      } catch (error) { text('detailStatus', error.message); }
+    }
+    async function loadFeatures(force = false) {
+      const bounds = map.getBounds();
+      const range = Number(document.getElementById('range').value);
+      const step = range / 240;
+      const longitudeStep = step / Math.max(.1, Math.cos(map.getCenter().lat * Math.PI / 180));
+      const quantized = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]
+        .map((value, index) => Math.round(value / (index % 2 === 0 ? longitudeStep : step)));
+      const layers = layerNames.filter(layer => document.getElementById(`layer-${layer}`).checked && !document.getElementById(`layer-${layer}`).disabled);
+      const requestKey = JSON.stringify([metadata?.active?.imported_at, range, layers, quantized, Math.floor(map.getCenter().lng / 360)]);
+      if (!force && requestKey === featureViewportKey) return;
+      featureController?.abort();
+      featureController = new AbortController();
+      featureViewportKey = requestKey;
+      const span = bounds.getEast() - bounds.getWest();
+      const coordinates = span >= 360 ? [-180, bounds.getSouth(), 180, bounds.getNorth()] :
+        [wrapLongitude(bounds.getWest()), bounds.getSouth(), wrapLongitude(bounds.getEast()), bounds.getNorth()];
+      coordinates[1] = Math.max(-90, coordinates[1]); coordinates[3] = Math.min(90, coordinates[3]);
+      if (!layers.length) { geography.clearLayers(); geometryKey = null; featureViewportKey = null; warning = metadata?.active ? '' : 'AVIATION LAYERS UNAVAILABLE'; statusMessage(); return; }
+      try {
+        const data = await json(`/api/aviation/features?bounds=${coordinates.join(',')}&layers=${layers.join(',')}`, {signal: featureController.signal});
+        if (!sameDataset(data)) { await loadMetadata(); return; }
+        const key = JSON.stringify([data.imported_at, data.features.map(feature => feature.id), data.truncated, layers, document.getElementById('range').value, Math.floor(map.getCenter().lng / 360)]);
+        if (key === geometryKey) return;
+        geometryKey = key;
+        geography.clearLayers();
+        warning = data.truncated ? 'FEATURE LIMIT / SOME LABELS OMITTED' : '';
+        const collection = {...data, features: data.features.map(feature => mapFeature(feature, map.getCenter().lng))};
+        const labeledAirports = airportLabelIds(data.features, Number(document.getElementById('range').value), map.getCenter());
+        const rendered = L.geoJSON(collection, {
+          style: feature => feature.geometry.type === 'Point' ? {} : ({color: ({B:'#69d8f1', C:'#ef8cd6', D:'#7faeff', E:'#d8a4d5'})[String(feature.properties.class).toUpperCase()] || '#d7b46b', weight: 1.5, fillOpacity: .035}),
+          pointToLayer: (feature, location) => L.circleMarker(location, {radius: feature.properties.layer === 'airports' ? 5 : 3,
+            color: feature.properties.layer === 'airports' ? '#9ee8bf' : feature.properties.layer === 'navaids' ? '#f6d67a' : '#9ad9ef', weight: 1.5, fillOpacity: .5}),
+          onEachFeature: (feature, layer) => {
+            const label = document.createElement('span'); label.textContent = feature.properties.ident || feature.properties.name || feature.id;
+            layer.bindTooltip(label, {permanent: labeledAirports.has(feature.id), className: 'map-label', direction: 'right'});
+            layer.on('click', () => selectFeature(feature.id));
+            if (feature.properties.layer === 'airports') for (const runway of feature.properties.runways || []) {
+              if (runway.coordinates) L.polyline(unwrapLine(runway.coordinates, map.getCenter().lng).map(point => [point[1], point[0]]), {color:'#d8eee0', weight: 3, interactive:false}).addTo(geography);
+            }
+          },
+        }).addTo(geography);
+        rendered.eachLayer(layer => { if (layer.feature?.geometry.type === 'Point') layer.bringToFront(); });
+        statusMessage();
+      } catch (error) {
+        if (error.name !== 'AbortError') { geography.clearLayers(); geometryKey = null; featureViewportKey = null; warning = 'GEOGRAPHY API UNAVAILABLE'; statusMessage(); }
+      }
+    }
+    function queueFeatures(force = false) {
+      drawGrid();
+      forceFeatureRefresh ||= force;
+      clearTimeout(queryTimer);
+      queryTimer = setTimeout(() => { const refresh = forceFeatureRefresh; forceFeatureRefresh = false; loadFeatures(refresh); }, 120);
+    }
+    async function applyRange(center = map.getCenter(), forceFeatures = false) {
+      const request = ++rangeRequest;
+      try {
+        const data = await json(`/api/aviation/range?lat=${center.lat}&lon=${wrapLongitude(center.lng)}&nm=${document.getElementById('range').value}`);
+        if (request !== rangeRequest) return;
+        if (data.projection_limited) { document.getElementById('scale').hidden = true; rangeWarning = 'MAP LATITUDE LIMIT / REDUCE RANGE'; statusMessage(); return; }
+        const pixels = Math.abs(map.project(data.north, 0).y - map.project(center, 0).y);
+        const zoom = Math.log2(map.getSize().y / (2 * pixels));
+        const clamped = Math.max(2, Math.min(18, zoom));
+        rangeWarning = Math.abs(clamped - zoom) > .001 ? 'MAP ZOOM LIMIT / RANGE CLIPPED' : '';
+        rangeApplying = true;
+        try { map.setView(center, clamped, {animate: false}); }
+        finally { rangeApplying = false; }
+        const east = L.latLng(data.scale_east[0], center.lng + wrapLongitude(data.scale_east[1] - center.lng));
+        document.getElementById('scaleBar').style.width = `${Math.abs(map.project(east).x - map.project(center).x)}px`;
+        text('scaleLabel', `${data.scale_nm} NM`); document.getElementById('scale').hidden = false;
+        statusMessage(); queueFeatures(forceFeatures);
+      } catch (error) { document.getElementById('scale').hidden = true; rangeWarning = 'RANGE API UNAVAILABLE'; statusMessage(); }
+    }
+    async function loadMetadata() {
+      try {
+        const previous = metadata?.active?.imported_at;
+        metadata = await json('/api/aviation/status');
+        text('provider', `REQUESTED ${metadata.requested_provider.toUpperCase()} / ACTIVE ${metadata.active?.provider?.toUpperCase() || 'NONE'}`);
+        text('dataError', metadata.error || '');
+        const container = document.getElementById('layerMetadata'); container.replaceChildren();
+        for (const layer of layerNames) {
+          const info = metadata.active?.layers?.[layer];
+          document.getElementById(`layer-${layer}`).disabled = !info?.available;
+          const section = document.createElement('div'); section.className = 'layer-meta';
+          const title = document.createElement('strong'); title.textContent = `${layer.toUpperCase()} / ${info?.available ? info.count : 'UNAVAILABLE'}`; section.append(title);
+          const lines = info?.available ? [info.source, info.coverage, `Cycle: ${info.cycle || 'unknown'} / Effective: ${info.effective_date || 'unknown'} / Valid until: ${info.valid_until || 'unknown'}`, info.currency, info.license, info.attribution, ...(info.warnings || [])] : [info?.reason || 'No imported dataset'];
+          for (const line of lines.filter(Boolean)) { const paragraph = document.createElement('p'); paragraph.textContent = line; section.append(paragraph); }
+          container.append(section);
+        }
+        if (previous !== metadata.active?.imported_at) {
+          geography.clearLayers(); geometryKey = null; featureViewportKey = null; text('detailStatus', 'NO SELECTION'); document.getElementById('detailFields').replaceChildren();
+          document.getElementById('nearest').replaceChildren(); lastNearest = 0; positionGeneration++;
+        }
+        queueFeatures(previous !== metadata.active?.imported_at);
+      } catch (error) { text('dataError', `Metadata API unavailable: ${error.message}`); }
+    }
+    async function loadNearest() {
+      if (!currentFlight?.position || nearestBusy || Date.now() - lastNearest < 1000) return;
+      nearestBusy = true; lastNearest = Date.now();
+      const generation = positionGeneration;
+      const [latitude, longitude] = currentFlight.position;
+      try {
+        const result = await json(`/api/aviation/nearest?lat=${latitude}&lon=${longitude}`);
+        if (generation !== positionGeneration || !currentFlight?.position) return;
+        if (result.available && !sameDataset(result)) { await loadMetadata(); return; }
+        const list = document.getElementById('nearest');
+        const focusedId = document.activeElement?.dataset.airport;
+        list.replaceChildren();
+        text('nearestStatus', !result.available ? 'AIRPORT DATA UNAVAILABLE' : result.airports.length ? `${metadata?.active?.layers?.airports?.coverage || 'Coverage unknown'} / BEARINGS TRUE` : 'NO IMPORTED AIRPORTS WITHIN RANGE / COVERAGE MAY BE INCOMPLETE');
+        for (const airport of result.airports) {
+          const item = document.createElement('li'), button = document.createElement('button');
+          const name = document.createElement('span'), distance = document.createElement('span');
+          name.textContent = airport.ident; distance.textContent = `${airport.distance_nm.toFixed(1)} NM / ${Math.round(airport.bearing_true_deg)} T`;
+          button.dataset.airport = airport.id;
+          button.append(name, distance); button.addEventListener('click', () => selectFeature(airport.id, true)); item.append(button); list.append(item);
+        }
+        if (focusedId) [...list.querySelectorAll('button')].find(button => button.dataset.airport === focusedId)?.focus({preventScroll:true});
+      } catch (error) { document.getElementById('nearest').replaceChildren(); text('nearestStatus', 'AIRPORT QUERY UNAVAILABLE'); }
+      finally { nearestBusy = false; }
+    }
+    function renderFlight(data) {
+      const view = flightView(data);
+      currentFlight = view;
+      text('sourceStatus', data?.status === 'error' ? `SOURCE ERROR / ${data.message || 'Live source unavailable'}` : `${(data?.mode || 'idle').toUpperCase()} / POSITION ${view.status.toUpperCase()}`);
+      document.getElementById('sourceStatus').className = `status ${view.status}`;
+      text('position', view.position ? `${view.position[0].toFixed(4)} / ${view.position[1].toFixed(4)}` : '--');
+      text('heading', view.heading == null ? '--' : `${view.heading.toFixed(0)} T`);
+      text('track', view.track == null ? '--' : `${view.track.toFixed(0)} T`);
+      text('speed', view.speed == null ? '--' : view.speed.toFixed(0));
+      if (!view.position || view.projectionLimited) {
+        ownship?.remove(); ownship = null; ownshipKind = null;
+        if (!view.position) { positionGeneration++; document.getElementById('nearest').replaceChildren(); text('nearestStatus', `POSITION ${view.status.toUpperCase()}`); }
+      } else {
+        const location = [view.position[0], map.getCenter().lng + wrapLongitude(view.position[1] - map.getCenter().lng)];
+        const kind = view.heading == null ? 'position' : 'aircraft';
+        if (kind !== ownshipKind) { ownship?.remove(); ownship = null; ownshipKind = kind; }
+        if (!ownship) ownship = kind === 'position' ? L.circleMarker(location, {radius:6,color:'#fff',fillColor:'#fff',fillOpacity:1,interactive:false}).addTo(map) :
+          L.marker(location, {interactive:false, keyboard:false, icon:L.divIcon({className:'aircraft-icon',iconSize:[32,32],iconAnchor:[16,16],html:'<svg viewBox="0 0 32 32" aria-label="Own aircraft"><path d="M16 2L19 13L29 20V23L19 20V27L22 30H10L13 27V20L3 23V20L13 13Z" fill="#fff" stroke="#101713"/></svg>'})}).addTo(map);
+        ownship.setLatLng(location);
+        if (kind === 'aircraft') { const icon = ownship.getElement()?.querySelector('svg'); if (icon) icon.style.transform = `rotate(${view.heading}deg)`; }
+        if (firstPosition) { firstPosition = false; if (follow.checked) applyRange(L.latLng(view.position)); }
+        else if (follow.checked) map.panTo(location, {animate:false});
+      }
+      statusMessage();
+      if (view.position) loadNearest();
+    }
+    async function poll() {
+      if (pollBusy) return;
+      pollBusy = true;
+      try { renderFlight(await json('/api/state')); }
+      catch (error) { renderFlight({mode:'api unavailable',state:null}); }
+      finally { pollBusy = false; }
+    }
+    function changeRange(direction) {
+      const select = document.getElementById('range');
+      select.value = String(ranges[Math.max(0, Math.min(ranges.length - 1, ranges.indexOf(Number(select.value)) + direction))]);
+      applyRange();
+    }
+    document.getElementById('range').addEventListener('change', () => applyRange(map.getCenter(), true));
+    document.getElementById('zoomIn').addEventListener('click', () => changeRange(-1));
+    document.getElementById('zoomOut').addEventListener('click', () => changeRange(1));
+    document.getElementById('recenter').addEventListener('click', () => { follow.checked = true; if (currentFlight?.position && !currentFlight.projectionLimited) applyRange(L.latLng(currentFlight.position), true); });
+    follow.addEventListener('change', () => { if (follow.checked && currentFlight?.position && !currentFlight.projectionLimited) applyRange(L.latLng(currentFlight.position), true); });
+    for (const layer of layerNames) document.getElementById(`layer-${layer}`).addEventListener('change', () => queueFeatures(true));
+    document.getElementById('reload').addEventListener('click', async () => {
+      const button = document.getElementById('reload'); button.disabled = true;
+      featureController?.abort();
+      try { await json('/api/aviation/reload', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); }
+      catch (error) { text('dataError', error.message); }
+      finally { await loadMetadata(); button.disabled = false; }
+    });
+    map.on('dragstart', () => { follow.checked = false; });
+    map.on('moveend', () => { queueFeatures(); if (!rangeApplying) applyRange(); });
+    map.on('resize', () => applyRange());
+    document.getElementById('map').addEventListener('keydown', event => {
+      const delta = ({ArrowLeft:[-80,0],ArrowRight:[80,0],ArrowUp:[0,-80],ArrowDown:[0,80]})[event.key];
+      if (delta) { event.preventDefault(); follow.checked = false; map.panBy(delta, {animate:false}); }
+      else if (event.key === '+' || event.key === '=') { event.preventDefault(); changeRange(-1); }
+      else if (event.key === '-') { event.preventDefault(); changeRange(1); }
+    });
+    loadMetadata(); applyRange(); poll();
+    const pollTimer = setInterval(poll, 250), metadataTimer = setInterval(loadMetadata, 10000);
+    window.addEventListener('beforeunload', () => { clearInterval(pollTimer); clearInterval(metadataTimer); clearTimeout(queryTimer); featureController?.abort(); });
+  </script>
+</body>
+</html>

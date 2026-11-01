@@ -1,0 +1,9 @@
+{
+  "provider": "public",
+  "acknowledge_data_terms": true,
+  "files": {"airports":"airports.csv","runways":"runways.csv","airspace":"airspace.geojson"},
+  "metadata": {
+    "airports": {"coverage":"SYNTHETIC TEST FIXTURE ONLY","license":"Project-authored synthetic fixture; not real aviation data"},
+    "airspace": {"coverage":"SYNTHETIC TEST FIXTURE ONLY","license":"Project-authored synthetic fixture; not real aviation data"}
+  }
+}

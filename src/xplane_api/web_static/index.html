@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flight Deck · X-Plane Telemetry</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080d16;
+      --panel: #101927;
+      --panel-raised: #152235;
+      --line: #26364c;
+      --text: #e8f0fa;
+      --muted: #91a3ba;
+      --cyan: #52e0d0;
+      --blue: #70a9ff;
+      --amber: #ffc857;
+      --red: #ff6878;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background: radial-gradient(ellipse at 48% -30%, #243b57 0%, transparent 52%), var(--bg);
+    }
+    button, input { font: inherit; }
+    button {
+      color: var(--text); background: #1a2a3d; border: 1px solid #30445e;
+      border-radius: 10px; padding: 10px 14px; cursor: pointer;
+      transition: background .16s ease, border-color .16s ease, transform .16s ease;
+    }
+    button:hover { background: #243a53; border-color: #597694; transform: translateY(-1px); }
+    button.primary { color: #061513; background: var(--cyan); border-color: var(--cyan); font-weight: 750; }
+    button.selected { border-color: var(--cyan); color: var(--cyan); box-shadow: 0 0 0 2px #52e0d022; }
+    .mfd-link { color: var(--cyan); font-size: 13px; }
+    button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .shell { max-width: 1440px; padding: 30px clamp(16px, 3vw, 46px) 46px; margin: auto; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 26px; }
+    .eyebrow { color: var(--cyan); font-size: 11px; font-weight: 800; letter-spacing: .19em; text-transform: uppercase; }
+    h1 { margin: 8px 0 6px; font-size: clamp(28px, 4vw, 43px); letter-spacing: -.045em; }
+    .sub { margin: 0; color: var(--muted); font-size: 14px; }
+    .live-pill { display: inline-flex; align-items: center; gap: 9px; border: 1px solid var(--line); background: #0d1622; padding: 10px 13px; border-radius: 999px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #67788a; box-shadow: 0 0 0 4px #67788a22; }
+    .dot.connected { background: var(--cyan); box-shadow: 0 0 0 4px #52e0d022, 0 0 15px #52e0d066; }
+    .dot.error { background: var(--red); box-shadow: 0 0 0 4px #ff687822; }
+    .top-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, .8fr); gap: 18px; align-items: stretch; }
+    .panel { border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(145deg, #121d2b, #0d1520); box-shadow: 0 18px 50px #0003; }
+    .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 19px 21px 15px; border-bottom: 1px solid #ffffff0b; }
+    .panel-title { font-size: 13px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .panel-hint { font-size: 11px; color: var(--muted); }
+    .controls { padding: 17px 20px 20px; display: grid; gap: 14px; }
+    .control-row { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+    .divider { height: 1px; background: #ffffff0d; }
+    .inline-label { font-size: 12px; color: var(--muted); margin-right: 2px; }
+    .file-label { display: inline-flex; align-items: center; gap: 9px; color: #c8d7e9; font-size: 12px; cursor: pointer; }
+    input[type=file] { max-width: 205px; color: var(--muted); font-size: 11px; }
+    .small { padding: 8px 11px; font-size: 12px; }
+    .source-note { min-height: 18px; color: var(--muted); font-size: 11px; }
+    .source-note.error { color: var(--red); }
+    .mini-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; padding: 0 20px 19px; }
+    .metric { background: #0a111b; border: 1px solid #ffffff0b; border-radius: 11px; padding: 10px 12px; min-width: 0; }
+    .metric span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .09em; margin-bottom: 6px; }
+    .metric strong { display: block; font-variant-numeric: tabular-nums; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .section-title { display: flex; justify-content: space-between; align-items: end; margin: 27px 2px 14px; }
+    .section-title h2 { margin: 0; font-size: 14px; letter-spacing: .1em; text-transform: uppercase; }
+    .section-title p { margin: 0; color: var(--muted); font-size: 11px; }
+    .gauges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }
+    .gauge-card { position: relative; overflow: hidden; min-height: 260px; padding: 16px 16px 15px; border: 1px solid var(--line); border-radius: 17px; background: linear-gradient(155deg, #131e2d, #0d1520 75%); }
+    .gauge-card::after { content: ""; position: absolute; width: 120px; height: 120px; right: -65px; top: -65px; border-radius: 50%; background: #52e0d008; filter: blur(4px); }
+    .gauge-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .gauge-name { color: #ccd9e8; font-size: 11px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+    .gauge-status { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+    .gauge-status.valid { color: var(--cyan); }
+    .gauge-status.stale, .gauge-status.invalid { color: var(--amber); }
+    .gauge-body { display: flex; align-items: center; justify-content: center; min-height: 190px; }
+    .dial { --dial-radius: 90px; width: 180px; height: 180px; position: relative; border-radius: 50%; border: 1px solid #31445b; background: radial-gradient(circle at 50% 42%, #1a2a3c, #0b121c 69%); box-shadow: inset 0 0 30px #0008, 0 9px 25px #0003; }
+    .dial::before { content: ""; position: absolute; inset: 8px; border: 1px solid #ffffff14; border-radius: 50%; }
+    .rose { position: absolute; inset: 0; border-radius: 50%; transition: transform .24s ease-out; }
+    .tick { position: absolute; width: 1px; height: 7px; left: 50%; top: 10px; background: #8194ac; }
+    .tick.major { height: 11px; width: 2px; background: #d0d9e5; }
+    .dial-label { position: absolute; transform: translate(-50%, -50%); color: #aebdd0; font-size: 9px; font-variant-numeric: tabular-nums; }
+    .needle-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; transform: rotate(0deg); transition: transform .24s ease-out; }
+    .needle { position: absolute; width: 2px; height: 66px; top: 26px; border-radius: 4px; background: linear-gradient(var(--cyan) 0 75%, #e4edf6 75%); box-shadow: 0 0 9px #52e0d066; }
+    .hub { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: #dce7f2; border: 3px solid #30435b; box-shadow: 0 0 0 2px #0a121d; }
+    .turn-wings { position: absolute; left: 50%; top: 37%; width: 58px; height: 12px; transform: translateX(-50%); }
+    .turn-wings::before { content: ""; position: absolute; left: 0; right: 0; top: 5px; height: 2px; background: #dce7f2; border-radius: 2px; }
+    .turn-wings::after { content: ""; position: absolute; left: 27px; top: 0; width: 4px; height: 12px; background: var(--amber); border-radius: 2px; }
+    .slip-track { position: absolute; left: 50%; bottom: 17px; width: 62px; height: 8px; transform: translateX(-50%); border: 1px solid #8999ad; border-radius: 8px; background: #07101a; }
+    .slip-track::after { content: ""; position: absolute; left: 50%; top: -3px; width: 1px; height: 12px; background: #d8e3ef88; }
+    .slip-ball { position: absolute; left: 50%; top: -3px; width: 12px; height: 12px; transform: translateX(-50%); border-radius: 50%; border: 1px solid #fff; background: var(--amber); box-shadow: 0 0 7px #ffc85766; transition: left .2s ease-out; }
+    .digital { position: absolute; left: 50%; bottom: 27px; transform: translateX(-50%); color: var(--text); font-size: 16px; font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .units { color: var(--muted); font-size: 9px; font-weight: 650; margin-left: 3px; }
+    .attitude { width: 180px; height: 180px; border-radius: 50%; border: 5px solid #25374c; overflow: hidden; position: relative; background: #12263d; box-shadow: inset 0 0 22px #0008, 0 9px 25px #0003; }
+    .skyground { position: absolute; inset: -45%; transform: rotate(0deg); transition: transform .24s ease-out; background: linear-gradient(to bottom, #397db0 0 49.5%, #e7d3a2 49.5% 50.5%, #806744 50.5% 100%); }
+    .skyground::after { content: ""; position: absolute; left: 0; top: calc(50% - 1px); width: 100%; height: 2px; background: #fff; box-shadow: 0 0 4px #0008; }
+    .pitch-mark { position: absolute; left: 50%; width: 42px; height: 2px; background: #fff; transform: translateX(-50%); top: 37%; box-shadow: 0 0 3px #000; }
+    .pitch-mark.low { top: 63%; width: 29px; }
+    .wings { position: absolute; left: 50%; top: 50%; width: 90px; height: 14px; transform: translate(-50%, -50%); }
+    .wings::before { content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 3px; border-radius: 3px; background: var(--amber); box-shadow: 0 0 4px #000b; }
+    .wings::after { content: ""; position: absolute; left: 42px; top: 0; width: 6px; height: 14px; border-radius: 3px; background: var(--amber); }
+    .att-digital { position: absolute; left: 50%; bottom: 13px; transform: translateX(-50%); font-size: 12px; font-weight: 750; background: #09111bcc; padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
+    .bar-card { display: grid; place-items: center; width: 180px; height: 180px; border-radius: 50%; border: 1px solid #31445b; background: radial-gradient(circle at 50% 42%, #1a2a3c, #0b121c 69%); box-shadow: inset 0 0 30px #0008, 0 9px 25px #0003; }
+    .bar-readout { text-align: center; font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .bar-readout small { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; }
+    .adsb-panel { margin-top: 18px; }
+    .adsb-empty { display: flex; align-items: center; gap: 13px; padding: 18px 21px; color: var(--muted); font-size: 12px; }
+    .lock { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #34475e; border-radius: 9px; color: var(--amber); font-size: 15px; }
+    .foot { margin-top: 16px; color: #74869c; font-size: 10px; line-height: 1.6; }
+    @media (max-width: 900px) { .top-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 650px) { header { display: block; } .live-pill { margin-top: 17px; } .gauges { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .gauge-card { min-height: 226px; padding: 12px 9px; } .dial, .attitude, .bar-card { width: 155px; height: 155px; } .needle { height: 55px; top: 23px; } .digital { bottom: 22px; font-size: 14px; } .att-digital { bottom: 9px; } }
+    @media (max-width: 390px) { .gauges { grid-template-columns: 1fr; } .gauge-card { min-height: 245px; } }
+    [hidden] { display: none !important; }
+    .instrument-heading { align-items: center; gap: 12px; flex-wrap: wrap; }
+    .view-selector { display: flex; border: 1px solid #53616b; border-radius: 4px; padding: 2px; gap: 2px; }
+    .view-selector button { border: 0; border-radius: 2px; padding: 7px 14px; font-size: 13px; }
+    .view-selector button[aria-pressed="true"] { background: #e6edf0; color: #14191d; }
+    button:focus-visible, input:focus-visible { outline: 2px solid #ffc857; outline-offset: 3px; }
+    .pfd { --pfd-line: #70808b; border: 2px solid #505a60; background: #080b0d; padding: 12px; font-family: "DIN Alternate", "Arial Narrow", monospace; letter-spacing: 0; }
+    .pfd-top { display: flex; justify-content: space-between; gap: 8px; padding: 0 2px 10px; font-size: 13px; color: #d3dde1; }
+    .pfd-top strong { color: #fff; }
+    .pfd-main { display: grid; grid-template-columns: 96px minmax(0, 1fr) 106px 68px; gap: 4px; height: 360px; }
+    .pfd-region { position: relative; overflow: hidden; min-width: 0; background: #1c252b; }
+    .pfd svg { display: block; width: 100%; height: 100%; }
+    .pfd svg text { fill: #fff; font-family: "DIN Alternate", "Arial Narrow", monospace; font-variant-numeric: tabular-nums; font-size: 19px; }
+    .pfd svg line, .pfd svg path, .pfd svg circle { vector-effect: non-scaling-stroke; }
+    .pfd .readout { fill: #050708; stroke: #fff; stroke-width: 2; }
+    .pfd svg .reading { font-size: 25px; font-weight: bold; }
+    .pfd svg .scale-label { font-size: 13px; fill: #ccd7dd; }
+    .pfd-flag { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; background: #101518; color: #ffce59; font-size: 13px; text-align: center; border: 1px solid #695832; }
+    .pfd-flag b { font-size: 20px; color: #fff; }
+    .pfd-region[data-status="valid"] > .pfd-flag { display: none; }
+    .pfd-region:not([data-status="valid"]) > svg { visibility: hidden; }
+    .pfd-attitude { background: #217dc0; }
+    .pfd-attitude svg { overflow: hidden; }
+    .pfd-attitude .attitude-data { position: absolute; bottom: 8px; width: 100%; text-align: center; font-size: 13px; color: #fff; text-shadow: 1px 1px #000; }
+    .pfd-attitude:not([data-status="valid"]) .attitude-data { visibility: hidden; }
+    .pfd-lower { display: grid; grid-template-columns: minmax(0, 1fr) 310px minmax(0, 1fr); align-items: center; border-top: 1px solid #505a60; margin-top: 6px; gap: 12px; }
+    .pfd-heading { width: 310px; height: 260px; background: #080b0d; }
+    .pfd-aux { align-self: stretch; display: flex; flex-direction: column; justify-content: center; gap: 14px; min-width: 0; }
+    .pfd-value { padding: 8px 0; border-bottom: 1px solid #39444c; min-width: 0; }
+    .pfd-value label { display: block; font-size: 12px; color: #a7b9c4; margin-bottom: 5px; }
+    .pfd-value output { font-size: 21px; color: #fff; font-variant-numeric: tabular-nums; }
+    .pfd-value small { display: block; font-size: 11px; margin-top: 4px; color: #ffce59; min-height: 13px; }
+    .pfd-slip { height: 14px; width: 100%; max-width: 130px; border: 1px solid #aebac0; position: relative; margin: 8px 0; }
+    .pfd-slip::after { content: ""; position: absolute; left: 45%; width: 10%; height: 100%; border-left: 1px solid #fff; border-right: 1px solid #fff; }
+    .pfd-slip span { position: absolute; height: 10px; width: 10px; top: 1px; border-radius: 50%; background: #fff; transform: translateX(-50%); }
+    .pfd-slip[data-status]:not([data-status="valid"]) span { visibility: hidden; }
+    .pfd-unit { font-size: 12px; color: #afc0c9; }
+    body[data-display] .shell { max-width: 1600px; min-height: 100svh; padding: 12px; display: grid; align-content: center; }
+    body[data-display] .shell > :not(#glassCockpit):not(#gauges) { display: none; }
+    body[data-display="glass"] #gauges, body[data-display="sixpack"] #glassCockpit { display: none !important; }
+    @media (max-width: 650px) {
+      .dial { --dial-radius: 77.5px; }
+      .shell { padding: 16px 10px 24px; }
+      .pfd { padding: 6px; }
+      .pfd-main { grid-template-columns: 64px minmax(0, 1fr) 76px 34px; gap: 2px; height: 300px; }
+      .pfd-top { font-size: 11px; flex-wrap: wrap; }
+      .pfd-lower { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+      .pfd-heading { grid-column: 1 / -1; grid-row: 1; width: 280px; height: 235px; justify-self: center; }
+      .pfd-aux { gap: 0; }
+      .pfd-flag { font-size: 9px; overflow-wrap: anywhere; }
+      .pfd-flag b { font-size: 14px; }
+      .pfd-attitude .attitude-data { font-size: 10px; }
+      .metric strong { white-space: normal; overflow-wrap: anywhere; }
+      .control-row input[type=file] { max-width: 180px; }
+      .panel-head { gap: 8px; flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">Oden Aerospace · Telemetry Lab</div>
+        <h1>Flight Deck</h1>
+        <p class="sub">X-Plane 12 · C172 G1000 · live telemetry and replay bench</p>
+      </div>
+      <a class="mfd-link" href="/mfd">Navigation MFD</a>
+      <div class="live-pill"><span class="dot" id="connectionDot"></span><span id="connectionText">No source selected</span></div>
+    </header>
+
+    <section class="top-grid">
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">Data source</div><div class="panel-hint" id="sourceBadge">IDLE</div></div>
+        <div class="controls">
+          <div class="control-row">
+            <button class="primary" id="connectButton">Connect to X-Plane</button>
+            <span class="inline-label">Live sampling</span>
+            <button class="small" id="freq2">2 Hz</button>
+            <button class="small" id="freq5">5 Hz</button>
+            <button class="small" id="freq10">10 Hz</button>
+            <label class="inline-label" for="staleSeconds">Stale after (s)</label>
+            <input id="staleSeconds" type="number" min="0.1" step="0.1" placeholder="required" style="width:90px;background:#0a111b;color:var(--text);border:1px solid #30445e;border-radius:8px;padding:8px">
+          </div>
+          <div class="divider"></div>
+          <div class="control-row">
+            <label class="file-label">Load JSONL recording <input id="recordingFile" type="file" accept=".jsonl,.ndjson,.txt,application/x-ndjson"></label>
+            <button class="small" id="playButton" disabled>Play</button>
+            <button class="small" id="pauseButton" disabled>Pause</button>
+            <button class="small" id="stopButton" disabled>Stop</button>
+            <button class="small" id="sourceStopButton" disabled>Disconnect / unload</button>
+          </div>
+          <div class="source-note" id="sourceNote">Choose a live source or load a versioned JSON Lines recording.</div>
+        </div>
+        <div class="mini-metrics">
+          <div class="metric"><span>Aircraft</span><strong id="aircraftId">—</strong></div>
+          <div class="metric"><span>Sample</span><strong id="sampleTime">—</strong></div>
+          <div class="metric"><span>Valid fields</span><strong id="validCount">—</strong></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">Flight data</div><div class="panel-hint">normalized state</div></div>
+        <div class="controls" style="padding-bottom:10px">
+          <div class="metric"><span>Position</span><strong id="position">—</strong></div>
+          <div class="metric"><span>Ground / vertical speed</span><strong id="speeds">—</strong></div>
+          <div class="metric"><span>Heading · true / magnetic</span><strong id="headings">—</strong></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="section-title instrument-heading"><h2 id="instrumentTitle">Primary flight display</h2><div class="view-selector" role="group" aria-label="Instrument view"><button id="glassView" aria-pressed="true" aria-controls="glassCockpit">Glass</button><button id="sixPackView" aria-pressed="false" aria-controls="gauges">Six-pack</button></div></div>
+    <section id="glassCockpit" class="pfd" aria-label="Glass cockpit primary flight display">
+      <div class="pfd-top"><strong>PRIMARY FLIGHT DISPLAY</strong><span>IAS / KT</span><span>IND ALT / FT</span></div>
+      <div class="pfd-main">
+        <div id="pfd-airspeed" class="pfd-region" data-status="unavailable" aria-label="Indicated airspeed"></div>
+        <div id="pfd-attitude" class="pfd-region pfd-attitude" data-status="unavailable" aria-label="Attitude">
+          <svg id="pfd-horizon" viewBox="0 0 400 400" role="img" aria-label="Pitch and bank horizon">
+            <defs><clipPath id="pfd-ladderClip"><rect x="90" y="130" width="220" height="140"/></clipPath></defs>
+            <g>
+              <g id="pfd-bank"><g id="pfd-pitch">
+                <rect x="-1000" y="-1800" width="2400" height="2000" fill="#217dc0"/>
+                <rect x="-1000" y="200" width="2400" height="2000" fill="#785032"/>
+                <path d="M-1000 200H1400" stroke="white" stroke-width="2"/>
+              </g></g>
+              <g clip-path="url(#pfd-ladderClip)"><g id="pfd-ladder"></g></g>
+              <g id="pfd-bankScale"></g>
+              <path d="M200 60l-8 13h16z" fill="white"/>
+              <path d="M125 200h42v8h-8v-3h-34z M275 200h-42v8h8v-3h34z M196 197h8v8h-8z" fill="#ffe251" stroke="#151515" stroke-width="1"/>
+            </g>
+          </svg>
+          <div class="attitude-data" id="pfd-attitudeValue">--</div>
+          <div class="pfd-flag"><b>ATT</b><span>UNAVAILABLE</span></div>
+        </div>
+        <div id="pfd-altitude" class="pfd-region" data-status="unavailable" aria-label="Indicated barometric altitude"></div>
+        <div id="pfd-vsi" class="pfd-region" data-status="unavailable" aria-label="Vertical speed"></div>
+      </div>
+      <div class="pfd-lower">
+        <div class="pfd-aux">
+          <div class="pfd-value"><label for="pfd-gs">GROUND SPEED <span class="pfd-unit">KT</span></label><output id="pfd-gs">--</output><small id="pfd-gsStatus">UNAVAILABLE</small></div>
+          <div class="pfd-value"><label for="pfd-vsiAux">VERTICAL SPEED <span class="pfd-unit">FPM</span></label><output id="pfd-vsiAux">--</output><small id="pfd-vsiAuxStatus">UNAVAILABLE</small></div>
+          <div class="pfd-value"><label for="pfd-turn">TURN DEFLECTION <span class="pfd-unit">DEG</span></label><output id="pfd-turn">--</output><small id="pfd-turnStatus">UNAVAILABLE</small></div>
+        </div>
+        <div id="pfd-heading" class="pfd-region pfd-heading" data-status="unavailable" aria-label="Magnetic heading"></div>
+        <div class="pfd-aux">
+          <div class="pfd-value"><label for="pfd-baro">BARO <span class="pfd-unit">INHG</span></label><output id="pfd-baro">--</output><small id="pfd-baroStatus">UNAVAILABLE</small></div>
+          <div class="pfd-value"><label for="pfd-slipValue">SLIP DEFLECTION <span class="pfd-unit">DEG</span></label><output id="pfd-slipValue">--</output><div class="pfd-slip" id="pfd-slip" data-status="unavailable"><span id="pfd-slipBall"></span></div><small id="pfd-slipValueStatus">UNAVAILABLE</small></div>
+        </div>
+      </div>
+    </section>
+    <section class="gauges" id="gauges" hidden>
+      <article class="gauge-card" data-gauge="airspeed"><div class="gauge-head"><span class="gauge-name">Airspeed</span><span class="gauge-status" id="status-airspeed">NO DATA</span></div><div class="gauge-body"><div class="dial" id="dial-airspeed"></div></div></article>
+      <article class="gauge-card" data-gauge="attitude"><div class="gauge-head"><span class="gauge-name">Attitude</span><span class="gauge-status" id="status-attitude">NO DATA</span></div><div class="gauge-body"><div class="attitude" id="attitudeDial"><div class="skyground" id="skyground"><span class="pitch-mark"></span><span class="pitch-mark low"></span></div><div class="wings"></div><div class="att-digital" id="attitudeValue">—</div></div></div></article>
+      <article class="gauge-card" data-gauge="altimeter"><div class="gauge-head"><span class="gauge-name">Altimeter</span><span class="gauge-status" id="status-altimeter">NO DATA</span></div><div class="gauge-body"><div class="bar-card"><div class="bar-readout" id="altitudeValue">—<small>feet MSL</small></div></div></div></article>
+      <article class="gauge-card" data-gauge="turn"><div class="gauge-head"><span class="gauge-name">Turn coordinator</span><span class="gauge-status" id="status-turn">NO DATA</span></div><div class="gauge-body"><div class="dial" id="dial-turn"></div></div></article>
+      <article class="gauge-card" data-gauge="heading"><div class="gauge-head"><span class="gauge-name">Heading indicator</span><span class="gauge-status" id="status-heading">NO DATA</span></div><div class="gauge-body"><div class="dial" id="dial-heading"></div></div></article>
+      <article class="gauge-card" data-gauge="vsi"><div class="gauge-head"><span class="gauge-name">Vertical speed</span><span class="gauge-status" id="status-vsi">NO DATA</span></div><div class="gauge-body"><div class="dial" id="dial-vsi"></div></div></article>
+    </section>
+
+    <section class="panel aviation-panel">
+      <div class="panel-head"><div class="panel-title">Aviation map data</div><a class="mfd-link" href="/mfd">Open MFD</a></div>
+      <div class="controls"><div class="control-row"><button class="small" id="aviationReload">Reload configured data</button><span class="source-note" id="aviationStatus">No data configured</span></div></div>
+    </section>
+    <section class="panel adsb-panel">
+      <div class="panel-head"><div class="panel-title">1090ES output</div><div class="panel-hint">offline test stream · RF disabled</div></div>
+      <div class="adsb-empty"><span class="lock">⌑</span><span>DF17 identification-frame construction is available to the Python API. Position, velocity, surface and operational-status output is gated on explicit DO-260B test-profile settings. RF is disabled.</span></div>
+    </section>
+    <p class="foot">Simulation and development display only. Not certified avionics and not for operational navigation or RF transmission. Data validity is shown per field; unavailable or stale values are never silently replaced.</p>
+  </main>
+
+  <script>
+    const standaloneDisplay = document.body.dataset.display;
+    function usable(state, field) {
+      return state?.field_status?.[field] === 'valid' && Number.isFinite(state[field]);
+    }
+    function fieldState(state, fields) {
+      const statuses = fields.map(field => usable(state, field) ? 'valid' :
+        ['stale', 'invalid'].includes(state?.field_status?.[field]) ? state.field_status[field] : 'unavailable');
+      return statuses.includes('invalid') ? 'invalid' : statuses.includes('stale') ? 'stale' :
+        statuses.includes('unavailable') ? 'unavailable' : 'valid';
+    }
+    function flagMarkup(name) {
+      return `<div class="pfd-flag"><b>${name}</b><span>UNAVAILABLE</span></div>`;
+    }
+    function setRegionStatus(id, status) {
+      const region = document.getElementById(`pfd-${id}`);
+      region.dataset.status = status;
+      region.querySelector('.pfd-flag span').textContent = status.toUpperCase();
+    }
+    function buildGlass() {
+      for (const [id, width, name] of [['airspeed', 96, 'IAS'], ['altitude', 106, 'ALT']]) {
+        const pointer = id === 'airspeed' ? `M1 157H${width - 13}L${width - 2} 180L${width - 13} 203H1Z` :
+          `M${width - 1} 157H13L2 180L13 203H${width - 1}Z`;
+        document.getElementById(`pfd-${id}`).innerHTML = `<svg viewBox="0 0 ${width} 360" preserveAspectRatio="none" role="img" aria-label="${name} tape"><g id="pfd-${id}Ticks"></g><path class="readout" d="${pointer}"/><text id="pfd-${id}Value" class="reading" x="${width / 2}" y="189" text-anchor="middle">--</text></svg>${flagMarkup(name)}`;
+      }
+      document.getElementById('pfd-vsi').innerHTML = `<svg viewBox="0 0 68 360" preserveAspectRatio="none" role="img" aria-label="Vertical speed feet per minute"><text class="scale-label" x="34" y="18" text-anchor="middle">VSI</text>${[-2000, -1000, 0, 1000, 2000].map(value => `<path d="M4 ${180 - value * .065}h9" stroke="white"/><text x="19" y="${185 - value * .065}" class="scale-label">${value === 0 ? '0' : `${value / 1000}k`}</text>`).join('')}<path id="pfd-vsiPointer" d="M1 180l12 -7v14z" fill="#fff"/><text id="pfd-vsiValue" x="34" y="332" text-anchor="middle" style="font-size:16px">--</text><text class="scale-label" x="34" y="350" text-anchor="middle">FPM</text></svg>${flagMarkup('V/S')}`;
+      const headingTicks = Array.from({ length: 72 }, (_, index) => {
+        const angle = index * 5;
+        const major = angle % 30 === 0;
+        const label = ({ 0: 'N', 90: 'E', 180: 'S', 270: 'W' })[angle] || String(angle / 10);
+        return `<g transform="rotate(${angle} 155 140)"><path d="M155 30v${major ? 14 : 6}" stroke="white"/>${major ? `<text x="155" y="63" text-anchor="middle">${label}</text>` : ''}</g>`;
+      }).join('');
+      document.getElementById('pfd-heading').innerHTML = `<svg viewBox="0 0 310 280" role="img" aria-label="Magnetic compass rose"><circle cx="155" cy="140" r="110" fill="#131a20" stroke="#8a99a3"/><g id="pfd-rose">${headingTicks}</g><path d="M155 105v70m-33 -40h66m-44 27h22" stroke="#ffe251" stroke-width="3"/><path d="M155 40l-7 -12h14z" fill="white"/><path class="readout" d="M111 2h88v30h-88z"/><text id="pfd-headingValue" x="155" y="24" text-anchor="middle">--</text><text class="scale-label" x="155" y="275" text-anchor="middle">MAGNETIC</text></svg>${flagMarkup('HDG')}`;
+      document.getElementById('pfd-ladder').innerHTML = Array.from({ length: 33 }, (_, index) => (index - 16) * 5).filter(value => value !== 0).map(value => {
+        const width = value % 10 === 0 ? 60 : 30;
+        const y = 200 - value * 4;
+        return `<path d="M${200 - width / 2} ${y}h${width}" stroke="white"/>${value % 10 === 0 ? `<text x="${210 + width / 2}" y="${y + 5}" style="font-size:14px">${Math.abs(value)}</text>` : ''}`;
+      }).join('');
+      document.getElementById('pfd-bankScale').innerHTML = [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60].map(angle => `<path d="M200 75v${angle % 30 === 0 ? 14 : 7}" transform="rotate(${angle} 200 200)" stroke="white" stroke-width="2"/>`).join('');
+    }
+    function layoutGlass() {
+      const region = document.getElementById('pfd-attitude');
+      if (!region.clientHeight || !region.clientWidth) return;
+      const width = region.clientWidth * 400 / region.clientHeight;
+      document.getElementById('pfd-horizon').setAttribute('viewBox', `${200 - width / 2} 0 ${width} 400`);
+    }
+    function renderTape(id, value, step, pixelsPerUnit, width) {
+      const ticks = [];
+      const base = Math.floor(value / step) * step;
+      const count = Math.ceil(180 / (step * pixelsPerUnit)) + 1;
+      for (let offset = -count; offset <= count; offset++) {
+        const tick = base + offset * step;
+        if (id === 'airspeed' && tick < 0) continue;
+        const y = 180 - (tick - value) * pixelsPerUnit;
+        if (y < 12 || y > 348) continue;
+        const edge = id === 'airspeed' ? width - 2 : 2;
+        const direction = id === 'airspeed' ? -1 : 1;
+        ticks.push(`<path d="M${edge} ${y}h${direction * 12}" stroke="white"/><text x="${id === 'airspeed' ? width - 20 : 20}" y="${y + 6}" text-anchor="${id === 'airspeed' ? 'end' : 'start'}">${tick}</text>`);
+      }
+      document.getElementById(`pfd-${id}Ticks`).innerHTML = ticks.join('');
+      document.getElementById(`pfd-${id}Value`).textContent = Math.round(value);
+    }
+    function renderGlass(state) {
+      for (const [id, fields] of [['airspeed', ['indicated_airspeed_kt']], ['altitude', ['barometric_altitude_ft']], ['attitude', ['pitch_deg', 'roll_deg']], ['heading', ['magnetic_heading_deg']], ['vsi', ['vertical_speed_fpm']]]) {
+        const status = fieldState(state, fields);
+        setRegionStatus(id, status);
+        if (status !== 'valid') {
+          const value = document.getElementById(`pfd-${id}Value`);
+          if (value) value.textContent = '--';
+          continue;
+        }
+        if (id === 'airspeed') renderTape(id, state.indicated_airspeed_kt, 10, 5, 96);
+        if (id === 'altitude') renderTape(id, state.barometric_altitude_ft, 100, .5, 106);
+        if (id === 'attitude') {
+          document.getElementById('pfd-bank').setAttribute('transform', `rotate(${-state.roll_deg} 200 200)`);
+          document.getElementById('pfd-pitch').setAttribute('transform', `translate(0 ${state.pitch_deg * 4})`);
+          document.getElementById('pfd-ladder').setAttribute('transform', `rotate(${-state.roll_deg} 200 200) translate(0 ${state.pitch_deg * 4})`);
+          document.getElementById('pfd-bankScale').setAttribute('transform', `rotate(${-state.roll_deg} 200 200)`);
+          document.getElementById('pfd-attitudeValue').textContent = `P ${state.pitch_deg.toFixed(1)} / R ${state.roll_deg.toFixed(1)}`;
+        }
+        if (id === 'heading') {
+          const heading = ((state.magnetic_heading_deg % 360) + 360) % 360;
+          document.getElementById('pfd-rose').setAttribute('transform', `rotate(${-heading} 155 140)`);
+          document.getElementById('pfd-headingValue').textContent = `${String(Math.round(heading) % 360).padStart(3, '0')} M`;
+        }
+        if (id === 'vsi') {
+          const speed = state.vertical_speed_fpm;
+          document.getElementById('pfd-vsiPointer').setAttribute('transform', `translate(0 ${-Math.max(-2000, Math.min(2000, speed)) * .065})`);
+          document.getElementById('pfd-vsiValue').textContent = `${speed > 0 ? '+' : ''}${Math.round(speed)}`;
+        }
+      }
+      for (const [id, field, factor, digits] of [['gs', 'ground_speed_mps', 1.9438444924406, 0], ['vsiAux', 'vertical_speed_fpm', 1, 0], ['baro', 'barometer_setting_inhg', 1, 2], ['turn', 'turn_indicator_deflection_deg', 1, 1], ['slipValue', 'slip_indicator_deflection_deg', 1, 1]]) {
+        const status = fieldState(state, [field]);
+        document.getElementById(`pfd-${id}`).textContent = status === 'valid' ? `${id === 'vsiAux' && state[field] > 0 ? '+' : ''}${(state[field] * factor).toFixed(digits)}` : '--';
+        document.getElementById(`pfd-${id}Status`).textContent = status === 'valid' ? '' : status.toUpperCase();
+      }
+      const slipStatus = fieldState(state, ['slip_indicator_deflection_deg']);
+      document.getElementById('pfd-slip').dataset.status = slipStatus;
+      document.getElementById('pfd-slipBall').style.left = `${slipStatus === 'valid' ? 50 + Math.max(-5, Math.min(5, state.slip_indicator_deflection_deg)) * 8 : 50}%`;
+    }
+    buildGlass();
+    layoutGlass();
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(layoutGlass).observe(document.getElementById('pfd-attitude'));
+    function selectView(glass) {
+      document.getElementById('glassCockpit').hidden = !glass;
+      document.getElementById('gauges').hidden = glass;
+      document.getElementById('glassView').setAttribute('aria-pressed', String(glass));
+      document.getElementById('sixPackView').setAttribute('aria-pressed', String(!glass));
+      document.getElementById('instrumentTitle').textContent = glass ? 'Primary flight display' : 'Six-pack instruments';
+    }
+    document.getElementById('glassView').addEventListener('click', () => selectView(true));
+    document.getElementById('sixPackView').addEventListener('click', () => selectView(false));
+    const gaugeConfig = {
+      airspeed: { title: 'Airspeed', field: 'indicated_airspeed_kt', unit: 'kt', max: 180, marks: [0, 20, 40, 60, 80, 100, 120, 140, 160, 180], kind: 'needle' },
+      turn: { title: 'Turn', field: 'turn_indicator_deflection_deg', unit: '°', max: 3, marks: [-3, -2, -1, 0, 1, 2, 3], kind: 'needle' },
+      heading: { title: 'Heading', field: 'magnetic_heading_deg', unit: '°M', max: 360, marks: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330], kind: 'heading' },
+      vsi: { title: 'Vertical speed', field: 'vertical_speed_fpm', unit: 'fpm', max: 2000, marks: [-2000, -1500, -1000, -500, 0, 500, 1000, 1500, 2000], kind: 'vsi' },
+    };
+    const dialIds = ['airspeed', 'turn', 'heading', 'vsi'];
+    function buildDial(id) {
+      const cfg = gaugeConfig[id];
+      const dial = document.getElementById(`dial-${id}`);
+      const rose = cfg.kind === 'heading' ? document.createElement('div') : dial;
+      if (cfg.kind === 'heading') {
+        rose.className = 'rose';
+        rose.id = 'rose-heading';
+        dial.appendChild(rose);
+      }
+      for (let i = 0; i < cfg.marks.length; i++) {
+        const value = cfg.marks[i];
+        const angle = cfg.kind === 'heading' ? value : -135 + (i / (cfg.marks.length - 1)) * 270;
+        const tick = document.createElement('span');
+        tick.className = `tick ${i % 2 === 0 ? 'major' : ''}`;
+        tick.style.transform = `rotate(${angle}deg)`;
+        rose.appendChild(tick);
+        const label = document.createElement('span');
+        label.className = 'dial-label';
+        label.textContent = cfg.kind === 'heading' ? String(value / 10) : String(value);
+        const labelAngle = cfg.kind === 'heading' ? value : angle;
+        const rad = (labelAngle - 90) * Math.PI / 180;
+        label.style.left = `${50 + 35 * Math.cos(rad)}%`;
+        label.style.top = `${50 + 35 * Math.sin(rad)}%`;
+        rose.appendChild(label);
+      }
+      const needle = document.createElement('div');
+      needle.className = 'needle-wrap';
+      needle.id = `needle-${id}`;
+      needle.innerHTML = '<span class="needle"></span><span class="hub"></span>';
+      dial.appendChild(needle);
+      if (id === 'turn') {
+        const airplane = document.createElement('span');
+        airplane.className = 'turn-wings';
+        dial.appendChild(airplane);
+        const slipTrack = document.createElement('span');
+        slipTrack.className = 'slip-track';
+        slipTrack.innerHTML = '<span class="slip-ball" id="slipBall"></span>';
+        dial.appendChild(slipTrack);
+      }
+      rose.querySelectorAll('.tick').forEach(tick => {
+        tick.style.transformOrigin = '50% calc(var(--dial-radius) - 10px)';
+      });
+      const digital = document.createElement('div');
+      digital.className = 'digital';
+      digital.id = `value-${id}`;
+      digital.innerHTML = `—<span class="units">${cfg.unit}</span>`;
+      dial.appendChild(digital);
+    }
+    dialIds.forEach(buildDial);
+    selectView(standaloneDisplay !== 'sixpack');
+    if (standaloneDisplay) document.title = standaloneDisplay === 'glass' ? 'Glass Cockpit | Flight Deck' : 'Six-Pack | Flight Deck';
+
+    let selectedFrequency = null;
+    let pollHandle = null;
+    const note = document.getElementById('sourceNote');
+    function setNote(text, error = false) { note.textContent = text; note.className = `source-note${error ? ' error' : ''}`; }
+    function fmt(value, digits = 1) { return value == null || !Number.isFinite(value) ? '—' : Number(value).toFixed(digits); }
+    function statusFor(state, field, statusId) {
+      const status = fieldState(state, [field]);
+      const node = document.getElementById(statusId);
+      node.textContent = status.replace('_', ' ').toUpperCase();
+      node.className = `gauge-status ${status}`;
+      return status === 'valid' ? state[field] : null;
+    }
+    function updateNeedle(id, value, min, max, inverted = false) {
+      document.getElementById(`needle-${id}`).style.visibility = value == null ? 'hidden' : '';
+      if (id === 'heading') document.getElementById('rose-heading').style.visibility = value == null ? 'hidden' : '';
+      if (value == null) {
+        document.getElementById(`value-${id}`).innerHTML = `--<span class="units">${gaugeConfig[id].unit}</span>`;
+        return;
+      }
+      if (id === 'heading') {
+        document.getElementById('rose-heading').style.transform = `rotate(${-value}deg)`;
+        document.getElementById('needle-heading').style.transform = 'rotate(0deg)';
+        document.getElementById('value-heading').innerHTML = `${fmt(value, 0)}<span class="units">${gaugeConfig[id].unit}</span>`;
+        return;
+      }
+      const normalized = Math.max(0, Math.min(1, (value - min) / (max - min)));
+      const angle = -135 + normalized * 270;
+      document.getElementById(`needle-${id}`).style.transform = `rotate(${inverted ? -angle : angle}deg)`;
+      const cfg = gaugeConfig[id];
+      document.getElementById(`value-${id}`).innerHTML = `${fmt(value, 0)}<span class="units">${cfg.unit}</span>`;
+    }
+    function render(data) {
+      const state = data.state;
+      renderGlass(state);
+      const dot = document.getElementById('connectionDot');
+      const connection = document.getElementById('connectionText');
+      document.getElementById('sourceBadge').textContent = (data.mode || 'idle').toUpperCase();
+      const sourceState = data.status || 'idle';
+      dot.className = `dot${sourceState === 'connected' || sourceState === 'playing' ? ' connected' : sourceState === 'error' ? ' error' : ''}`;
+      connection.textContent = data.message || (state ? 'Receiving state' : 'No source selected');
+      document.getElementById('playButton').disabled = data.mode !== 'recording' || sourceState === 'playing';
+      document.getElementById('pauseButton').disabled = data.mode !== 'recording' || sourceState !== 'playing';
+      document.getElementById('stopButton').disabled = data.mode !== 'recording';
+      document.getElementById('sourceStopButton').disabled = data.mode === 'idle';
+      if (!state) {
+        for (const id of ['airspeed', 'attitude', 'altimeter', 'turn', 'heading', 'vsi']) {
+          const node = document.getElementById(`status-${id}`);
+          node.textContent = 'NO DATA';
+          node.className = 'gauge-status';
+        }
+        for (const id of dialIds) {
+          updateNeedle(id, null);
+        }
+        document.getElementById('rose-heading').style.transform = 'rotate(0deg)';
+        document.getElementById('slipBall').style.left = '50%';
+        document.getElementById('slipBall').style.visibility = 'hidden';
+        document.getElementById('skyground').style.visibility = 'hidden';
+        document.getElementById('attitudeValue').textContent = '—';
+        document.getElementById('altitudeValue').innerHTML = '—<small>feet MSL</small>';
+        document.getElementById('aircraftId').textContent = '—';
+        document.getElementById('sampleTime').textContent = '—';
+        document.getElementById('validCount').textContent = '—';
+        document.getElementById('position').textContent = '—';
+        document.getElementById('speeds').textContent = '—';
+        document.getElementById('headings').textContent = '—';
+        return;
+      }
+
+      const airspeed = statusFor(state, 'indicated_airspeed_kt', 'status-airspeed');
+      updateNeedle('airspeed', airspeed, 0, 180);
+      const turn = statusFor(state, 'turn_indicator_deflection_deg', 'status-turn');
+      const slip = statusFor(state, 'slip_indicator_deflection_deg', 'status-turn');
+      updateNeedle('turn', turn, -3, 3);
+      const turnStatus = fieldState(state, ['turn_indicator_deflection_deg', 'slip_indicator_deflection_deg']);
+      document.getElementById('status-turn').textContent = turnStatus.toUpperCase();
+      document.getElementById('status-turn').className = `gauge-status ${turnStatus}`;
+      document.getElementById('slipBall').style.visibility = slip == null ? 'hidden' : '';
+      if (slip != null) {
+        const clampedSlip = Math.max(-5, Math.min(5, slip));
+        document.getElementById('slipBall').style.left = `${50 + clampedSlip * 8}%`;
+      }
+      const heading = statusFor(state, 'magnetic_heading_deg', 'status-heading');
+      updateNeedle('heading', heading, 0, 360, true);
+      const vsi = statusFor(state, 'vertical_speed_fpm', 'status-vsi');
+      updateNeedle('vsi', vsi, -2000, 2000, true);
+      const pitch = statusFor(state, 'pitch_deg', 'status-attitude');
+      const roll = usable(state, 'roll_deg') ? state.roll_deg : null;
+      const attitudeStatus = fieldState(state, ['pitch_deg', 'roll_deg']);
+      document.getElementById('status-attitude').textContent = attitudeStatus.toUpperCase();
+      document.getElementById('status-attitude').className = `gauge-status ${attitudeStatus}`;
+      document.getElementById('skyground').style.visibility = pitch == null || roll == null ? 'hidden' : '';
+      if (pitch != null && roll != null) {
+        document.getElementById('skyground').style.transform = `rotate(${-Number(roll)}deg) translateY(${Math.max(-28, Math.min(28, Number(pitch) * 2.5))}px)`;
+        document.getElementById('attitudeValue').textContent = `${fmt(pitch)}° / ${fmt(roll)}°`;
+      } else {
+        document.getElementById('skyground').style.transform = 'rotate(0deg) translateY(0px)';
+        document.getElementById('attitudeValue').textContent = '—';
+      }
+      const altitude = statusFor(state, 'barometric_altitude_ft', 'status-altimeter');
+      document.getElementById('altitudeValue').innerHTML = `${altitude == null ? '—' : fmt(altitude, 0)}<small>feet MSL</small>`;
+      const idField = state.field_status?.flight_id === 'valid' ? state.flight_id : null;
+      const tailField = state.field_status?.tail_number === 'valid' ? state.tail_number : null;
+      const typeField = state.field_status?.aircraft_type_code === 'valid' ? state.aircraft_type_code : null;
+      document.getElementById('aircraftId').textContent = idField || tailField || typeField || '—';
+      document.getElementById('sampleTime').textContent = state.timestamp_utc ? new Date(state.timestamp_utc).toLocaleTimeString() : '—';
+      const statusValues = Object.values(state.field_status || {});
+      document.getElementById('validCount').textContent = `${statusValues.filter(s => s === 'valid').length} / ${statusValues.length}`;
+      const positionValid = state.field_status?.latitude_deg === 'valid' && state.field_status?.longitude_deg === 'valid';
+      document.getElementById('position').textContent = !positionValid ? '—' : `${fmt(state.latitude_deg, 5)}°, ${fmt(state.longitude_deg, 5)}°`;
+      const gs = state.field_status?.ground_speed_mps === 'valid' ? `${fmt(state.ground_speed_mps, 1)} m/s` : '— m/s';
+      const vs = state.field_status?.vertical_speed_fpm === 'valid' ? `${fmt(state.vertical_speed_fpm, 0)} fpm` : '— fpm';
+      const track = state.field_status?.ground_track_deg === 'valid' ? `${fmt(state.ground_track_deg, 1)}° track` : '— track';
+      document.getElementById('speeds').textContent = `${gs} · ${vs} · ${track}`;
+      const trueHeading = state.field_status?.true_heading_deg === 'valid' ? `${fmt(state.true_heading_deg, 1)}°T` : '—°T';
+      const magneticHeading = state.field_status?.magnetic_heading_deg === 'valid' ? `${fmt(state.magnetic_heading_deg, 1)}°M` : '—°M';
+      document.getElementById('headings').textContent = `${trueHeading} · ${magneticHeading}`;
+    }
+    async function refresh() {
+      try {
+        const response = await fetch('/api/state', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        render(await response.json());
+      } catch (error) {
+        render({ mode: 'idle', status: 'error', message: 'Local API unavailable', state: null });
+        setNote(`Local API unavailable: ${error}`, true);
+      }
+    }
+    async function post(path, body) {
+      const response = await fetch(path, { method: 'POST', headers: body instanceof Blob ? {} : { 'Content-Type': 'application/json' }, body });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || response.statusText);
+      return data;
+    }
+    document.getElementById('connectButton').addEventListener('click', async () => {
+      try {
+        const staleAfter = Number(document.getElementById('staleSeconds').value);
+        if (!selectedFrequency) throw new Error('Choose a live sample rate first.');
+        if (!Number.isFinite(staleAfter) || staleAfter <= 0) throw new Error('Enter a positive stale-data timeout.');
+        setNote('Discovering X-Plane beacon…');
+        await post('/api/live', JSON.stringify({ frequency_hz: selectedFrequency, stale_after_seconds: staleAfter }));
+        setNote('Connected source requested.');
+      }
+      catch (error) { setNote(error.message, true); }
+    });
+    for (const hz of [2, 5, 10]) document.getElementById(`freq${hz}`).addEventListener('click', event => {
+      selectedFrequency = hz;
+      document.querySelectorAll('[id^="freq"]').forEach(button => button.classList.remove('selected'));
+      event.currentTarget.classList.add('selected');
+      setNote(`Live sample rate set to ${hz} Hz for the next connection.`);
+    });
+    document.getElementById('recordingFile').addEventListener('change', async event => {
+      const file = event.target.files?.[0]; if (!file) return;
+      try { await post('/api/recording', await file.text()); setNote(`Loaded ${file.name}. Press Play to begin at real-time 1×.`); }
+      catch (error) { setNote(error.message, true); }
+    });
+    for (const [id, action] of [['playButton','play'],['pauseButton','pause'],['stopButton','stop']]) {
+      document.getElementById(id).addEventListener('click', async () => {
+        try { await post('/api/playback', JSON.stringify({ action })); }
+        catch (error) { setNote(error.message, true); }
+      });
+    }
+    document.getElementById('sourceStopButton').addEventListener('click', async () => {
+      try { await post('/api/stop', '{}'); setNote('Source stopped.'); }
+      catch (error) { setNote(error.message, true); }
+    });
+    async function refreshAviation() {
+      try {
+        const response = await fetch('/api/aviation/status', {cache:'no-store'});
+        if (!response.ok) throw new Error('Aviation API unavailable');
+        const data = await response.json();
+        document.getElementById('aviationStatus').textContent = `Requested ${data.requested_provider} / Active ${data.active?.provider || 'none'}${data.error ? ` / ${data.error}` : ''}`;
+      } catch (error) { document.getElementById('aviationStatus').textContent = error.message; }
+    }
+    document.getElementById('aviationReload').addEventListener('click', async () => {
+      const button = document.getElementById('aviationReload'); button.disabled = true;
+      try { await post('/api/aviation/reload', '{}'); }
+      catch (error) { document.getElementById('aviationStatus').textContent = error.message; }
+      finally { await refreshAviation(); button.disabled = false; }
+    });
+    if (!standaloneDisplay) refreshAviation();
+    refresh();
+    pollHandle = setInterval(refresh, 250);
+    window.addEventListener('beforeunload', () => clearInterval(pollHandle));
+  </script>
+</body>
+</html>

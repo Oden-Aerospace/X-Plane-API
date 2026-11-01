@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {"type": "Polygon", "coordinates": [[[-77.35,38.65],[-77.35,39.12],[-76.65,39.12],[-76.65,38.65],[-77.35,38.65]]]},
+      "properties": {"IDENT":"SYNTH-B","NAME":"SYNTHETIC OUTER AREA","CLASS":"B","LOWER_DESC":"1500 MSL","UPPER_DESC":"FL100"}
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "Polygon", "coordinates": [[[-77.12,38.88],[-77.12,39.02],[-76.98,39.02],[-76.98,38.88],[-77.12,38.88]]]},
+      "properties": {"IDENT":"SYNTH-D","NAME":"SYNTHETIC FIELD AREA","CLASS":"D","LOWER_DESC":"SFC","UPPER_DESC":"2500 MSL"}
+    }
+  ]
+}

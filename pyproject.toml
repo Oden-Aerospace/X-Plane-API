@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xplane-api"
+version = "0.1.0"
+description = "Python API and test harness for X-Plane 12 telemetry and offline 1090ES output"
+readme = "README.md"
+dependencies = ["geographiclib==2.1"]
+
+[project.optional-dependencies]
+adsb-test = ["pyModeS==3.6.0; python_version >= '3.11'"]
+
+[project.scripts]
+xplane-api-web = "xplane_api.web:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+xplane_api = ["web_static/*.html", "web_static/vendor/*", "web_static/vendor/images/*.png"]

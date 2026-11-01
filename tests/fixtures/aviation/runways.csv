@@ -1,0 +1,4 @@
+airport_ident,le_ident,he_ident,length_ft,width_ft,surface,le_longitude_deg,le_latitude_deg,he_longitude_deg,he_latitude_deg,closed
+TEST1,01,19,4000,100,ASP,-77.052,38.944,-77.048,38.956,0
+TEST2,09,27,3000,75,GRS,-76.855,38.85,-76.845,38.85,0
+TEST3,04,22,2800,75,ASP,-77.254,38.746,-77.246,38.754,0
