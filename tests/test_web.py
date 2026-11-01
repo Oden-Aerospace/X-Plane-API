@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from http.client import HTTPConnection
 import json
+from pathlib import Path
+import tempfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -13,7 +15,13 @@ from xplane_api.web import create_server
 
 class LocalHarnessHttpTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = create_server("127.0.0.1", 0)
+        self._source_config_directory = tempfile.TemporaryDirectory()
+        self.server = create_server(
+            "127.0.0.1",
+            0,
+            source_config_path=Path(self._source_config_directory.name)
+            / "live-source.json",
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         host, port = self.server.server_address
@@ -25,6 +33,7 @@ class LocalHarnessHttpTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
         self.connection.close()
+        self._source_config_directory.cleanup()
 
     def request(self, method: str, path: str, body: bytes = b"") -> tuple[int, bytes]:
         self.connection.request(method, path, body=body)

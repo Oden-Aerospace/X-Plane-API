@@ -137,7 +137,17 @@ automatically. The harness does not yet record or replay autopilot sidecars.
 
 ## Run the local harness
 
-Run `PYTHONPATH=src python -m xplane_api.web` and open `http://127.0.0.1:8765/`. The server binds to loopback by default. Enable **Accept incoming connections** in X-Plane 12 Network settings before connecting. Choose a live frequency and stale timeout in the UI; there are no silent library defaults for either. For playback, load a schema-v1 JSONL recording and use Play/Pause/Stop; playback defaults to recorded timing at 1×. The 1090ES area is intentionally a placeholder until message/address/quality mappings are implemented.
+Run `PYTHONPATH=src python -m xplane_api.web` and open `http://127.0.0.1:8765/`. The server binds to loopback by default. Enable **Accept incoming connections** in X-Plane 12 Network settings before connecting. Choose a live frequency and stale timeout in the UI; there are no silent library defaults for either. After the first explicit connection, these settings are saved to `~/.config/xplane-api/live-source.json`. The server attempts one connection at startup, and the dashboard makes an ensure-connection request only when the source is idle or its prior live attempt failed. There is no periodic retry, and opening the dashboard does not replace active recording playback. Reconfigure by selecting the desired rate/timeout and connecting again. Use `--source-config PATH` to select a different settings file. If X-Plane is unavailable, the failure remains visible and the UI can be used to retry or reconfigure. For playback, load a schema-v1 JSONL recording and use Play/Pause/Stop; playback defaults to recorded timing at 1×. The 1090ES area is intentionally a placeholder until message/address/quality mappings are implemented.
+
+The harness shows annunciated autopilot state on the Glass and Six-pack
+views, and at `/autopilot`. It is read-only unless launched explicitly with
+`--allow-autopilot-control`; that option enables the mode-controller controls
+only while a live source is connected. Inputs are requests, and the displayed
+result comes only from simulator read-back. During replay, select the
+telemetry JSONL and its matching autopilot JSONL sidecar, then choose **Load
+paired**. Telemetry-only v1 recordings remain supported, and playback never
+enables controls. The harness does not verify that selected files belong to
+the same session.
 
 `sim/cockpit2/radios/actuators/flight_id` is the X-Plane Mode-S Flight ID/callsign source (the test C172 returned `N172SP`). `sim/aircraft/view/acf_ICAO` returns an aircraft type code such as `C172`; `sim/aircraft/view/acf_tailnum` also returned `N172SP`. None of these is the assigned Mode S 24-bit ICAO address, and the package does not treat them as that address.
 
