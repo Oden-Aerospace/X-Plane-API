@@ -111,6 +111,30 @@ simulation tooling, not certified avionics.
 
 Use `write_jsonl(stream, state)` to write one schema-versioned state record per line and `iter_jsonl(stream)` to read records. `JsonlPlayback` provides a deterministic pull cursor. `next_sample()` is non-blocking; `next_sample_realtime()` waits for the recorded intervals at 1× and responds to pause/stop from another thread. `GroundTrackDeriver(minimum_movement_m=...)` adds a `ground_track_deg` value after it has a valid position baseline and sufficient movement; the threshold is required because it depends on accepted GPS noise and downstream needs.
 
+Autopilot snapshots can be stored in a separate JSONL sidecar with
+`write_autopilot_jsonl(stream, state)` and read with `iter_autopilot_jsonl`.
+The caller selects and performs fixed-rate sampling; each supplied snapshot
+is written, including unchanged snapshots. A transition between samples can
+be missed. `AutopilotJsonlPlayback.from_stream(stream)` replays that sidecar
+alone. To replay it with telemetry:
+
+```python
+from xplane_api import PairedJsonlPlayback
+
+with open("flight.jsonl", encoding="utf-8") as flight_file, \
+        open("autopilot.jsonl", encoding="utf-8") as autopilot_file:
+    playback = PairedJsonlPlayback.from_streams(flight_file, autopilot_file)
+    playback.play()
+    while (event := playback.next_sample_realtime()) is not None:
+        print(event.kind, event.timestamp_utc, event.state)
+```
+
+The caller must pair files from the same session and ensure their timestamps
+use compatible clocks. Playback emits records on one UTC timeline, with
+telemetry before autopilot at equal timestamps; it does not invent states or
+control the simulator. The library does not verify session identity or sample
+automatically. The harness does not yet record or replay autopilot sidecars.
+
 ## Run the local harness
 
 Run `PYTHONPATH=src python -m xplane_api.web` and open `http://127.0.0.1:8765/`. The server binds to loopback by default. Enable **Accept incoming connections** in X-Plane 12 Network settings before connecting. Choose a live frequency and stale timeout in the UI; there are no silent library defaults for either. For playback, load a schema-v1 JSONL recording and use Play/Pause/Stop; playback defaults to recorded timing at 1×. The 1090ES area is intentionally a placeholder until message/address/quality mappings are implemented.
