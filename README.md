@@ -92,14 +92,19 @@ runtimes over stdio. Install the optional extra first:
 `--allow-control` additionally registers `press_button` and `set_selector`.
 Flight-plan direct-to is independently off by default and requires
 `--allow-flight-plan-control`; it registers `direct_to_waypoint` without
-enabling autopilot control. Connection is explicit and fails fast at launch:
-give `--host`/`--port` or `--discover-timeout-seconds` for beacon discovery,
-plus the required `--frequency-hz` subscription rate.
+enabling autopilot control. The composite `direct_to_and_activate` tool is
+registered only when both flags are set; it confirms the route before
+engaging AP if needed and selecting NAV if neither NAV nor GPSS is active or
+armed. It reports success only after state read-back confirms the target,
+engaged AP, and active NAV/GPSS. Connection is explicit and fails fast at
+launch: give `--host`/`--port` or `--discover-timeout-seconds` for beacon
+discovery, plus the required `--frequency-hz` subscription rate.
 
 ```sh
 xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5                              # read-only
 xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-control              # autopilot control
 xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-flight-plan-control  # direct-to
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-control --allow-flight-plan-control # direct-to + activate
 ```
 
 Tool schemas carry the button/selector enums, units, and ranges; tool
@@ -128,6 +133,16 @@ confirms the target. Start the web harness with
 flag; this is separate from `--allow-control`. Direct-to changes the
 simulator's navigation route and may change the aircraft path when NAV/GPSS is
 coupled; it does not send autopilot commands.
+
+When both control flags are enabled, MCP also provides
+`direct_to_and_activate(identifier, timeout_seconds, poll_interval_seconds,
+stale_after_seconds)`. This explicitly combined operation preserves the
+route-only semantics of `direct_to_waypoint`: it confirms the route first,
+then engages the AP only if needed and selects NAV only if neither NAV nor
+GPSS is already active or armed. It returns `confirmed` only after read-back
+shows the requested target active, AP engaged, and NAV or GPSS active; an
+activation timeout returns `partial_failure` with the confirmed route and
+observed state. It does not alter vertical modes or targets.
 
 The opt-in gates the Python HTTP/MCP surfaces. X-Plane's Web API allows
 connected clients to write datarefs and activate commands, and its documented

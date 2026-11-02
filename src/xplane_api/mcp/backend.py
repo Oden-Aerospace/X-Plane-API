@@ -45,6 +45,7 @@ CONDITION_FIELDS = (
     + _VERTICAL_CONDITION_FIELDS
     + _NUMERIC_CONDITION_FIELDS
 )
+_NAVIGATION_MODES = frozenset({LateralMode.NAV, LateralMode.GPSS})
 
 
 def _validate_non_negative(name: str, value: Any) -> float:
@@ -53,6 +54,13 @@ def _validate_non_negative(name: str, value: Any) -> float:
     numeric = float(value)
     if not math.isfinite(numeric) or numeric < 0:
         raise ValueError(f"{name} must be a finite non-negative number")
+    return numeric
+
+
+def _validate_positive(name: str, value: Any) -> float:
+    numeric = _validate_non_negative(name, value)
+    if numeric == 0:
+        raise ValueError(f"{name} must be finite and positive")
     return numeric
 
 
@@ -187,6 +195,171 @@ class AutopilotToolBackend:
     def direct_to_waypoint(self, identifier: str) -> dict[str, Any]:
         """Request a direct-to and require simulator plan read-back."""
         return self.flight_plan_client.direct_to(identifier)
+
+    def direct_to_and_activate(
+        self,
+        identifier: str,
+        *,
+        timeout_seconds: float,
+        poll_interval_seconds: float,
+        stale_after_seconds: float,
+    ) -> dict[str, Any]:
+        """Confirm a direct-to, then engage AP navigation and verify read-back."""
+        timeout = _validate_positive("timeout_seconds", timeout_seconds)
+        poll_interval = _validate_positive(
+            "poll_interval_seconds", poll_interval_seconds
+        )
+        stale_after = _validate_non_negative(
+            "stale_after_seconds", stale_after_seconds
+        )
+
+        route = self.flight_plan_client.direct_to(
+            identifier,
+            timeout_seconds=timeout,
+            poll_interval_seconds=poll_interval,
+        )
+        ap_button_transmitted = False
+        nav_button_transmitted = False
+
+        def partial_failure(
+            reason: str, state: AutopilotState | None
+        ) -> dict[str, Any]:
+            return self._direct_to_activation_result(
+                status="partial_failure",
+                route=route,
+                state=state,
+                ap_button_transmitted=ap_button_transmitted,
+                nav_button_transmitted=nav_button_transmitted,
+                reason=reason,
+            )
+
+        try:
+            state = self.panel.read_state(
+                timeout_seconds=poll_interval,
+                stale_after_seconds=stale_after,
+            )
+        except (OSError, RuntimeError) as exc:
+            return partial_failure(f"could not read autopilot state: {exc}", None)
+
+        if not self._navigation_state_is_usable(state):
+            return partial_failure(
+                "AP engagement or lateral mode state is unavailable or stale",
+                state,
+            )
+
+        if not state.ap_engaged:
+            try:
+                self.panel.press_button("AP")
+                ap_button_transmitted = True
+                ap_result = self.panel.wait_for(
+                    lambda observed: (
+                        observed.is_usable("ap_engaged")
+                        and observed.ap_engaged is True
+                    ),
+                    timeout_seconds=timeout,
+                    poll_interval_seconds=poll_interval,
+                    stale_after_seconds=stale_after,
+                )
+            except (OSError, RuntimeError) as exc:
+                return partial_failure(
+                    f"could not confirm AP engagement: {exc}", state
+                )
+            state = ap_result.state
+            if not ap_result.satisfied:
+                return partial_failure("AP engagement was not confirmed", state)
+
+        if not self._navigation_state_is_usable(state):
+            return partial_failure(
+                "AP engagement was confirmed, but lateral mode state is "
+                "unavailable or stale",
+                state,
+            )
+
+        if state.lateral_mode_active not in _NAVIGATION_MODES:
+            if state.lateral_mode_armed not in _NAVIGATION_MODES:
+                try:
+                    self.panel.press_button("NAV")
+                    nav_button_transmitted = True
+                except (OSError, RuntimeError) as exc:
+                    return partial_failure(
+                        f"could not transmit NAV selection: {exc}", state
+                    )
+
+            try:
+                navigation_result = self.panel.wait_for(
+                    lambda observed: (
+                        observed.is_usable("ap_engaged")
+                        and observed.ap_engaged is True
+                        and observed.is_usable("lateral_mode_active")
+                        and observed.lateral_mode_active in _NAVIGATION_MODES
+                    ),
+                    timeout_seconds=timeout,
+                    poll_interval_seconds=poll_interval,
+                    stale_after_seconds=stale_after,
+                )
+            except (OSError, RuntimeError) as exc:
+                return partial_failure(
+                    f"could not confirm NAV/GPSS activation: {exc}", state
+                )
+            state = navigation_result.state
+            if not navigation_result.satisfied:
+                return partial_failure(
+                    "NAV or GPSS did not become active before the timeout",
+                    state,
+                )
+
+        if not self._navigation_state_is_usable(state) or not state.ap_engaged:
+            return partial_failure(
+                "final AP or lateral mode state is unavailable or not engaged",
+                state,
+            )
+        if state.lateral_mode_active not in _NAVIGATION_MODES:
+            return partial_failure(
+                "final active lateral mode is neither NAV nor GPSS", state
+            )
+
+        return self._direct_to_activation_result(
+            status="confirmed",
+            route=route,
+            state=state,
+            ap_button_transmitted=ap_button_transmitted,
+            nav_button_transmitted=nav_button_transmitted,
+        )
+
+    @staticmethod
+    def _navigation_state_is_usable(state: AutopilotState) -> bool:
+        return all(
+            state.is_usable(field_name)
+            for field_name in (
+                "ap_engaged",
+                "lateral_mode_active",
+                "lateral_mode_armed",
+            )
+        )
+
+    @staticmethod
+    def _direct_to_activation_result(
+        *,
+        status: str,
+        route: dict[str, Any],
+        state: AutopilotState | None,
+        ap_button_transmitted: bool,
+        nav_button_transmitted: bool,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        activation: dict[str, Any] = {
+            "status": "confirmed" if status == "confirmed" else "failed",
+            "ap_button_transmitted": ap_button_transmitted,
+            "nav_button_transmitted": nav_button_transmitted,
+        }
+        if reason is not None:
+            activation["reason"] = reason
+        return {
+            "status": status,
+            "route": route,
+            "activation": activation,
+            "state": None if state is None else state.to_json_dict(),
+        }
 
     def read_state(
         self, *, timeout_seconds: float, stale_after_seconds: float

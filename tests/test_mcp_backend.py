@@ -34,8 +34,10 @@ class FakePanel:
         self.pressed: list[str] = []
         self.selectors: list[tuple[str, float]] = []
         self.read_calls: list[dict] = []
+        self.events: list[tuple[str, str | None]] = []
 
     def read_state(self, *, timeout_seconds, stale_after_seconds):
+        self.events.append(("read", None))
         self.read_calls.append(
             {
                 "timeout_seconds": timeout_seconds,
@@ -51,6 +53,7 @@ class FakePanel:
 
         AfcsButton(button)
         self.pressed.append(str(button))
+        self.events.append(("press", str(button)))
 
     def set_selector(self, selector, value):
         from xplane_api.models.autopilot import AfcsSelector
@@ -64,6 +67,7 @@ class FakePanel:
                  stale_after_seconds):
         from xplane_api.autopilot.panel import ConfirmationResult
 
+        self.events.append(("wait", None))
         final = self.states[0]
         for state in list(self.states):
             final = state
@@ -73,9 +77,10 @@ class FakePanel:
 
 
 class FakeFlightPlanClient:
-    def __init__(self) -> None:
+    def __init__(self, events=None) -> None:
         self.read_calls = 0
         self.direct_to_calls: list[str] = []
+        self.events = events if events is not None else []
 
     def read_plan(self) -> FlightPlanState:
         self.read_calls += 1
@@ -89,8 +94,16 @@ class FakeFlightPlanClient:
             entries=(),
         )
 
-    def direct_to(self, identifier: str) -> dict:
+    def direct_to(
+        self,
+        identifier: str,
+        *,
+        timeout_seconds: float = 5.0,
+        poll_interval_seconds: float = 0.1,
+    ) -> dict:
+        del timeout_seconds, poll_interval_seconds
         self.direct_to_calls.append(identifier)
+        self.events.append(("route", identifier))
         return {"status": "confirmed", "target_identifier": identifier}
 
 
@@ -197,6 +210,226 @@ class BackendTests(unittest.TestCase):
         result = backend.direct_to_waypoint("KSEA")
         self.assertEqual(result["status"], "confirmed")
         self.assertEqual(client.direct_to_calls, ["KSEA"])
+
+    def test_direct_to_and_activate_confirms_route_before_nav_input(self) -> None:
+        events: list[tuple[str, str | None]] = []
+        panel = FakePanel(
+            [
+                _state(
+                    ap_engaged=True,
+                    lateral_mode_active=LateralMode.HDG,
+                    lateral_mode_armed=LateralMode.NONE,
+                ),
+                _state(
+                    ap_engaged=True,
+                    lateral_mode_active=LateralMode.GPSS,
+                    lateral_mode_armed=LateralMode.NONE,
+                ),
+            ]
+        )
+        panel.events = events
+        client = FakeFlightPlanClient(events)
+        backend = AutopilotToolBackend(
+            panel,  # type: ignore[arg-type]
+            flight_plan_client=client,  # type: ignore[arg-type]
+        )
+
+        result = backend.direct_to_and_activate(
+            "KBWI",
+            timeout_seconds=5.0,
+            poll_interval_seconds=0.1,
+            stale_after_seconds=2.0,
+        )
+
+        self.assertEqual(result["status"], "confirmed")
+        self.assertEqual(result["route"]["target_identifier"], "KBWI")
+        self.assertEqual(result["state"]["lateral_mode_active"], "GPSS")
+        self.assertTrue(result["state"]["ap_engaged"])
+        self.assertEqual(panel.pressed, ["NAV"])
+        self.assertEqual(events[0], ("route", "KBWI"))
+        self.assertLess(events.index(("route", "KBWI")), events.index(("press", "NAV")))
+
+    def test_direct_to_and_activate_does_not_toggle_satisfied_modes(self) -> None:
+        panel = FakePanel(
+            [
+                _state(
+                    ap_engaged=True,
+                    lateral_mode_active=LateralMode.NAV,
+                    lateral_mode_armed=LateralMode.NONE,
+                )
+            ]
+        )
+        backend = AutopilotToolBackend(
+            panel,  # type: ignore[arg-type]
+            flight_plan_client=FakeFlightPlanClient(),  # type: ignore[arg-type]
+        )
+
+        result = backend.direct_to_and_activate(
+            "KBWI",
+            timeout_seconds=5.0,
+            poll_interval_seconds=0.1,
+            stale_after_seconds=2.0,
+        )
+
+        self.assertEqual(result["status"], "confirmed")
+        self.assertEqual(panel.pressed, [])
+
+    def test_direct_to_and_activate_engages_ap_then_selects_nav(self) -> None:
+        panel = FakePanel(
+            [
+                _state(
+                    ap_engaged=False,
+                    lateral_mode_active=LateralMode.HDG,
+                    lateral_mode_armed=LateralMode.NONE,
+                ),
+                _state(
+                    ap_engaged=True,
+                    lateral_mode_active=LateralMode.HDG,
+                    lateral_mode_armed=LateralMode.NONE,
+                ),
+                _state(
+                    ap_engaged=True,
+                    lateral_mode_active=LateralMode.NAV,
+                    lateral_mode_armed=LateralMode.NONE,
+                ),
+            ]
+        )
+        backend = AutopilotToolBackend(
+            panel,  # type: ignore[arg-type]
+            flight_plan_client=FakeFlightPlanClient(),  # type: ignore[arg-type]
+        )
+
+        result = backend.direct_to_and_activate(
+            "KBWI",
+            timeout_seconds=5.0,
+            poll_interval_seconds=0.1,
+            stale_after_seconds=2.0,
+        )
+
+        self.assertEqual(result["status"], "confirmed")
+        self.assertEqual(panel.pressed, ["AP", "NAV"])
+
+    def test_direct_to_and_activate_waits_for_armed_navigation_without_repress(self) -> None:
+        panel = FakePanel(
+            [
+                _state(
+                    ap_engaged=True,
+                    lateral_mode_active=LateralMode.HDG,
+                    lateral_mode_armed=LateralMode.NAV,
+                ),
+                _state(
+                    ap_engaged=True,
+                    lateral_mode_active=LateralMode.GPSS,
+                    lateral_mode_armed=LateralMode.NONE,
+                ),
+            ]
+        )
+        backend = AutopilotToolBackend(
+            panel,  # type: ignore[arg-type]
+            flight_plan_client=FakeFlightPlanClient(),  # type: ignore[arg-type]
+        )
+
+        result = backend.direct_to_and_activate(
+            "KBWI",
+            timeout_seconds=5.0,
+            poll_interval_seconds=0.1,
+            stale_after_seconds=2.0,
+        )
+
+        self.assertEqual(result["status"], "confirmed")
+        self.assertEqual(panel.pressed, [])
+
+    def test_direct_to_and_activate_returns_partial_when_mode_times_out(self) -> None:
+        panel = FakePanel(
+            [
+                _state(
+                    ap_engaged=True,
+                    lateral_mode_active=LateralMode.HDG,
+                    lateral_mode_armed=LateralMode.NONE,
+                )
+            ]
+        )
+        backend = AutopilotToolBackend(
+            panel,  # type: ignore[arg-type]
+            flight_plan_client=FakeFlightPlanClient(),  # type: ignore[arg-type]
+        )
+
+        result = backend.direct_to_and_activate(
+            "KBWI",
+            timeout_seconds=5.0,
+            poll_interval_seconds=0.1,
+            stale_after_seconds=2.0,
+        )
+
+        self.assertEqual(result["status"], "partial_failure")
+        self.assertEqual(result["route"]["target_identifier"], "KBWI")
+        self.assertEqual(result["state"]["lateral_mode_active"], "HDG")
+        self.assertEqual(panel.pressed, ["NAV"])
+
+    def test_direct_to_and_activate_does_not_control_with_unusable_state(self) -> None:
+        panel = FakePanel(
+            [
+                _state(
+                    ap_engaged=True,
+                    lateral_mode_active=None,
+                    lateral_mode_armed=LateralMode.NONE,
+                )
+            ]
+        )
+        backend = AutopilotToolBackend(
+            panel,  # type: ignore[arg-type]
+            flight_plan_client=FakeFlightPlanClient(),  # type: ignore[arg-type]
+        )
+
+        result = backend.direct_to_and_activate(
+            "KBWI",
+            timeout_seconds=5.0,
+            poll_interval_seconds=0.1,
+            stale_after_seconds=2.0,
+        )
+
+        self.assertEqual(result["status"], "partial_failure")
+        self.assertEqual(panel.pressed, [])
+
+    def test_direct_to_and_activate_route_failure_sends_no_autopilot_input(self) -> None:
+        class RouteFailure(FakeFlightPlanClient):
+            def direct_to(self, identifier: str, **kwargs) -> dict:
+                del identifier, kwargs
+                raise ValueError("unknown target")
+
+        panel = FakePanel()
+        backend = AutopilotToolBackend(
+            panel,  # type: ignore[arg-type]
+            flight_plan_client=RouteFailure(),  # type: ignore[arg-type]
+        )
+
+        with self.assertRaisesRegex(ValueError, "unknown target"):
+            backend.direct_to_and_activate(
+                "KBWI",
+                timeout_seconds=5.0,
+                poll_interval_seconds=0.1,
+                stale_after_seconds=2.0,
+            )
+
+        self.assertEqual(panel.pressed, [])
+        self.assertEqual(panel.read_calls, [])
+
+    def test_direct_to_and_activate_validates_timeouts_before_route_write(self) -> None:
+        client = FakeFlightPlanClient()
+        backend = AutopilotToolBackend(
+            self.panel,  # type: ignore[arg-type]
+            flight_plan_client=client,  # type: ignore[arg-type]
+        )
+
+        with self.assertRaises(ValueError):
+            backend.direct_to_and_activate(
+                "KBWI",
+                timeout_seconds=0.0,
+                poll_interval_seconds=0.1,
+                stale_after_seconds=2.0,
+            )
+
+        self.assertEqual(client.direct_to_calls, [])
 
     def test_press_button_reports_transmission_only(self) -> None:
         result = self.backend.press_button("HDG")

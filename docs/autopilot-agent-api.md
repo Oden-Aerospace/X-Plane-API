@@ -6,9 +6,18 @@ inputs, and validate results without reading package source code.
 
 Agents running in MCP tool runtimes can use the `xplane-api-mcp` server
 instead (optional `mcp` extra; read-only by default, control via
-`--allow-control`): its four tools mirror this reference and carry the same
-contract in their schemas and descriptions. The rest of this document is for
-agents calling the Python API directly.
+`--allow-control`): its tools carry the same contract in their schemas and
+descriptions. Flight-plan writes additionally require
+`--allow-flight-plan-control`; the combined direct-to-and-activate tool
+requires both control flags. The rest of this document is for agents calling
+the Python API directly.
+
+For an explicitly requested direct-to plus navigation activation, use the
+MCP `direct_to_and_activate` tool when it is available. It confirms the route
+before sending autopilot inputs, engages AP only if needed, avoids pressing
+NAV when NAV/GPSS is already active or armed, and verifies the final
+annunciation. The route-only `direct_to_waypoint` tool never changes
+autopilot modes.
 
 Verified against X-Plane 12.4.3 with the included Cessna 172 G1000. This is
 simulation tooling, not certified avionics; it does not model any specific

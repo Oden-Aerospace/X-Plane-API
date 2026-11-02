@@ -73,6 +73,9 @@ _VERIFIED_CAVEATS = (
 INSTRUCTIONS = (
     "Tools for operating the X-Plane 12 autopilot like its mode-controller "
     "panel, plus pilot-side flight-plan read and explicitly gated direct-to. "
+    "For an explicitly requested direct-to plus navigation activation, use "
+    "direct_to_and_activate when it is available; direct_to_waypoint alone "
+    "changes only the route. "
     + _CONTRACT
     + " "
     + _SAFETY
@@ -143,6 +146,37 @@ def build_server(
         )
         def direct_to_waypoint(identifier: str) -> dict[str, Any]:
             return backend.direct_to_waypoint(identifier)
+
+    if allow_control and allow_flight_plan_control:
+
+        @server.tool(
+            description=(
+                "For an explicitly requested direct-to with autopilot "
+                "navigation activation, confirm the route target first, then "
+                "engage AP only if it is not already engaged and select NAV "
+                "only if neither NAV nor GPSS is active or armed. Returns "
+                "confirmed only after read-back verifies the requested target "
+                "is active in the flight plan, AP servos are engaged, and "
+                "NAV or GPSS is active. If the route is confirmed but "
+                "activation is not, returns status=partial_failure with the "
+                "final observed state. Inputs are never retried blindly. "
+                "This does not change vertical modes or targets. Requires "
+                "both autopilot and flight-plan control opt-ins. "
+                + _SAFETY
+            )
+        )
+        def direct_to_and_activate(
+            identifier: str,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+            stale_after_seconds: float,
+        ) -> dict[str, Any]:
+            return backend.direct_to_and_activate(
+                identifier,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+                stale_after_seconds=stale_after_seconds,
+            )
 
     @server.tool(
         description=(

@@ -133,6 +133,37 @@ class ServerRegistryTests(unittest.TestCase):
         self.assertIn('"status": "confirmed"', result.content[0].text)
         self.assertEqual(client.direct_to_calls, ["KSEA"])
 
+    def test_composite_direct_to_requires_both_control_opt_ins(self) -> None:
+        for allow_control, allow_flight_plan_control in (
+            (False, False),
+            (True, False),
+            (False, True),
+        ):
+            _, tools, _ = self._tools(
+                allow_control=allow_control,
+                allow_flight_plan_control=allow_flight_plan_control,
+            )
+            self.assertNotIn(
+                "direct_to_and_activate", {tool.name for tool in tools}
+            )
+
+        _, tools, _ = self._tools(
+            allow_control=True,
+            allow_flight_plan_control=True,
+        )
+        combined = next(
+            tool for tool in tools if tool.name == "direct_to_and_activate"
+        )
+        self.assertEqual(
+            set(combined.input_schema["required"]),
+            {
+                "identifier",
+                "timeout_seconds",
+                "poll_interval_seconds",
+                "stale_after_seconds",
+            },
+        )
+
     def test_button_schema_enum_matches_library_enum(self) -> None:
         self.assertEqual(set(BUTTON_VALUES), {b.value for b in AfcsButton})
         self.assertEqual(set(SELECTOR_VALUES), {s.value for s in AfcsSelector})
@@ -155,6 +186,13 @@ class ServerRegistryTests(unittest.TestCase):
         self.assertIn("never clamped", by_name["set_selector"])
         self.assertIn("read-back", by_name["direct_to_waypoint"])
         self.assertIn("NAV/GPSS", by_name["direct_to_waypoint"])
+        self.assertIn(
+            "partial_failure", by_name["direct_to_and_activate"]
+        )
+        self.assertIn(
+            "neither NAV nor GPSS is active or armed",
+            by_name["direct_to_and_activate"],
+        )
 
     def test_call_read_tool_returns_state_json(self) -> None:
         server, _, _ = self._tools(allow_control=False)
