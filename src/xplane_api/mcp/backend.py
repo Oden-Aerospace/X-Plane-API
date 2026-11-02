@@ -1,10 +1,10 @@
-"""Dependency-free tool backend for the autopilot MCP server.
+"""Dependency-free tool backend for the autopilot and flight-plan MCP server.
 
-Implements the four tool behaviors over an :class:`AutopilotPanel` as plain
-methods with JSON-compatible inputs and outputs, so they are unit-testable
-without the MCP SDK. All validation happens here and raises ``ValueError``
-before anything is transmitted; the MCP layer converts those into structured
-tool errors.
+Implements tool behaviors over an :class:`AutopilotPanel` and
+:class:`FlightPlanClient` as plain methods with JSON-compatible inputs and
+outputs, so they are unit-testable without the MCP SDK. Validation happens
+before anything is transmitted; the MCP layer converts errors into
+structured tool errors.
 
 The contract mirrors the autopilot API: inputs are requests over
 unacknowledged UDP, and the only truth is the annunciated state read back
@@ -22,6 +22,7 @@ from xplane_api.models.autopilot import (
     LateralMode,
     VerticalMode,
 )
+from xplane_api.sources.flight_plan import FlightPlanClient
 
 
 _BOOL_CONDITION_FIELDS = (
@@ -166,8 +167,26 @@ class ControlDisabled:
 class AutopilotToolBackend:
     """Tool behaviors over one panel, with validation-first semantics."""
 
-    def __init__(self, panel: AutopilotPanel) -> None:
+    def __init__(
+        self,
+        panel: AutopilotPanel,
+        *,
+        flight_plan_client: FlightPlanClient | None = None,
+    ) -> None:
         self.panel = panel
+        self.flight_plan_client = (
+            flight_plan_client
+            if flight_plan_client is not None
+            else FlightPlanClient()
+        )
+
+    def read_flight_plan(self) -> dict[str, Any]:
+        """Read the pilot-side active plan through the shared Web API client."""
+        return self.flight_plan_client.read_plan().to_json_dict()
+
+    def direct_to_waypoint(self, identifier: str) -> dict[str, Any]:
+        """Request a direct-to and require simulator plan read-back."""
+        return self.flight_plan_client.direct_to(identifier)
 
     def read_state(
         self, *, timeout_seconds: float, stale_after_seconds: float

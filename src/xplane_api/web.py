@@ -38,6 +38,17 @@ from xplane_api.sources import (
     XPlaneStateAdapter,
     discover_xplane,
 )
+from xplane_api.sources.flight_plan import (
+    FlightPlanClient,
+    FlightPlanCommandError,
+    FlightPlanControlDisabledError,
+    FlightPlanError,
+    FlightPlanProtocolError,
+    FlightPlanReadbackError,
+    FlightPlanStateError,
+    FlightPlanTargetError,
+    FlightPlanUnavailableError,
+)
 
 
 _LOG = logging.getLogger("xplane_api.web")
@@ -497,6 +508,8 @@ class HarnessController:
 class HarnessHandler(BaseHTTPRequestHandler):
     controller: HarnessController
     aviation: AviationManager
+    flight_plan_client: FlightPlanClient
+    allow_flight_plan_control: bool
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         path = urlsplit(self.path).path
@@ -518,6 +531,16 @@ class HarnessHandler(BaseHTTPRequestHandler):
             self._send(200, content, "text/html; charset=utf-8")
         elif path == "/api/state":
             self._json(200, self.controller.snapshot())
+        elif path == "/api/flight-plan":
+            try:
+                plan = self.flight_plan_client.read_plan()
+            except FlightPlanError as exc:
+                self._json(
+                    503,
+                    {"available": False, "status": "unavailable", "error": str(exc)},
+                )
+            else:
+                self._json(200, plan.to_json_dict())
         elif path == "/api/live/config":
             self._json(200, self.controller.source_config_snapshot())
         elif path == "/mfd":
@@ -669,6 +692,44 @@ class HarnessHandler(BaseHTTPRequestHandler):
                     payload.get("selector"), payload.get("value")
                 )
                 self._json(200, {"status": "request_sent"})
+            elif self.path == "/api/flight-plan/direct-to":
+                if not self.allow_flight_plan_control:
+                    self._json(
+                        403,
+                        {
+                            "error": (
+                                "flight-plan control is disabled; relaunch with "
+                                "--allow-flight-plan-control"
+                            )
+                        },
+                    )
+                    return
+                payload = json.loads(body or b"{}")
+                if not isinstance(payload, dict):
+                    raise ValueError("request must be a JSON object")
+                identifier = payload.get("identifier")
+                if not isinstance(identifier, str):
+                    raise ValueError("identifier must be a string")
+                try:
+                    result = self.flight_plan_client.direct_to(identifier)
+                except FlightPlanControlDisabledError as exc:
+                    self._json(403, {"error": str(exc)})
+                except FlightPlanTargetError as exc:
+                    self._json(400, {"error": str(exc)})
+                except FlightPlanStateError as exc:
+                    self._json(409, {"error": str(exc)})
+                except FlightPlanReadbackError as exc:
+                    self._json(504, {"error": str(exc)})
+                except FlightPlanUnavailableError as exc:
+                    self._json(503, {"error": str(exc)})
+                except FlightPlanProtocolError as exc:
+                    self._json(502, {"error": str(exc)})
+                except FlightPlanCommandError as exc:
+                    self._json(409, {"error": str(exc)})
+                except FlightPlanError as exc:
+                    self._json(502, {"error": str(exc)})
+                else:
+                    self._json(200, result)
             elif self.path == "/api/stop":
                 self.controller.close()
                 self._json(200, self.controller.snapshot())
@@ -711,7 +772,9 @@ def create_server(
     *,
     aviation_config: str | None = None,
     allow_autopilot_control: bool = False,
+    allow_flight_plan_control: bool = False,
     source_config_path: Path | None = _DEFAULT_SOURCE_CONFIG_PATH,
+    flight_plan_client: FlightPlanClient | None = None,
 ) -> _LocalThreadingHTTPServer:
     """Create a loopback-only-capable local harness HTTP server."""
     controller = HarnessController(
@@ -724,6 +787,12 @@ def create_server(
 
     BoundHarnessHandler.controller = controller
     BoundHarnessHandler.aviation = create_manager(aviation_config)
+    BoundHarnessHandler.allow_flight_plan_control = allow_flight_plan_control
+    BoundHarnessHandler.flight_plan_client = (
+        flight_plan_client
+        if flight_plan_client is not None
+        else FlightPlanClient(allow_control=allow_flight_plan_control)
+    )
     server = _LocalThreadingHTTPServer((host, port), BoundHarnessHandler)
     server.daemon_threads = True
     server.controller = controller  # type: ignore[attr-defined]
@@ -748,6 +817,11 @@ def main() -> None:
         action="store_true",
         help="enable live autopilot control endpoints and UI affordances",
     )
+    parser.add_argument(
+        "--allow-flight-plan-control",
+        action="store_true",
+        help="enable direct-to writes through the flight-plan API",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -756,6 +830,7 @@ def main() -> None:
         args.port,
         aviation_config=args.aviation_config,
         allow_autopilot_control=args.allow_autopilot_control,
+        allow_flight_plan_control=args.allow_flight_plan_control,
         source_config_path=args.source_config,
     )
     print(f"X-Plane telemetry harness: http://{args.host}:{args.port}/")

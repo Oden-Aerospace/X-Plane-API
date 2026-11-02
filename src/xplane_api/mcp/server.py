@@ -34,6 +34,7 @@ from xplane_api.models.autopilot import AfcsButton, AfcsSelector
 from xplane_api.sources.autopilot import AutopilotStateAdapter
 from xplane_api.sources.beacon import discover_xplane
 from xplane_api.sources.control_client import XPlaneControlClient
+from xplane_api.sources.flight_plan import FlightPlanClient
 from xplane_api.sources.rref_client import RrefClient
 
 
@@ -71,12 +72,18 @@ _VERIFIED_CAVEATS = (
 
 INSTRUCTIONS = (
     "Tools for operating the X-Plane 12 autopilot like its mode-controller "
-    "panel. " + _CONTRACT + " " + _SAFETY
+    "panel, plus pilot-side flight-plan read and explicitly gated direct-to. "
+    + _CONTRACT
+    + " "
+    + _SAFETY
 )
 
 
 def build_server(
-    backend: AutopilotToolBackend, *, allow_control: bool
+    backend: AutopilotToolBackend,
+    *,
+    allow_control: bool,
+    allow_flight_plan_control: bool = False,
 ) -> "MCPServer":
     """Register tools for ``backend`` on a new MCP server instance."""
     if MCPServer is None:  # pragma: no cover
@@ -109,6 +116,33 @@ def build_server(
             timeout_seconds=timeout_seconds,
             stale_after_seconds=stale_after_seconds,
         )
+
+    @server.tool(
+        description=(
+            "Read the pilot-side primary flight plan as ordered entries with "
+            "identifier/type, position, SDK-reported altitude, active index, "
+            "timestamp, and per-field availability. This operation is "
+            "read-only; it does not change the simulator's route."
+        )
+    )
+    def read_flight_plan() -> dict[str, Any]:
+        return backend.read_flight_plan()
+
+    if allow_flight_plan_control:
+
+        @server.tool(
+            description=(
+                "Request direct-to a unique navigation-database identifier "
+                "on the pilot-side primary plan. This changes the simulator's "
+                "navigation route and may change the aircraft path when NAV/"
+                "GPSS is coupled; it does not change autopilot modes. The "
+                "result is returned only after a plan read-back confirms the "
+                "requested target is active. Use only for an explicitly "
+                "requested route change."
+            )
+        )
+        def direct_to_waypoint(identifier: str) -> dict[str, Any]:
+            return backend.direct_to_waypoint(identifier)
 
     @server.tool(
         description=(
@@ -204,6 +238,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "construct the write-capable client. Off by default."
         ),
     )
+    parser.add_argument(
+        "--allow-flight-plan-control",
+        action="store_true",
+        help=(
+            "Register direct_to_waypoint and enable its separate flight-plan "
+            "write client; off by default."
+        ),
+    )
     args = parser.parse_args(argv)
 
     direct = args.host is not None or args.port is not None
@@ -247,9 +289,20 @@ def main(argv: list[str] | None = None) -> None:
     else:
         control = ControlDisabled()
     panel = AutopilotPanel(adapter, control)
-    backend = AutopilotToolBackend(panel)
-    server = build_server(backend, allow_control=args.allow_control)
+    backend = AutopilotToolBackend(
+        panel,
+        flight_plan_client=FlightPlanClient(
+            allow_control=args.allow_flight_plan_control
+        ),
+    )
+    server = build_server(
+        backend,
+        allow_control=args.allow_control,
+        allow_flight_plan_control=args.allow_flight_plan_control,
+    )
     mode = "control-enabled" if args.allow_control else "read-only"
+    if args.allow_flight_plan_control:
+        mode += ", flight-plan-control-enabled"
     print(f"xplane-autopilot MCP server starting ({mode}, stdio)", file=sys.stderr)
     try:
         server.run("stdio")

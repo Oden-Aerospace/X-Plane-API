@@ -72,12 +72,13 @@
   <div class="toolbar" aria-label="Map controls">
     <div class="range"><button id="zoomIn" aria-label="Decrease map range" title="Decrease map range">+</button><label for="range">Range</label><select id="range"><option>2</option><option>5</option><option>10</option><option selected>20</option><option>50</option><option>100</option></select><span>NM</span><button id="zoomOut" aria-label="Increase map range" title="Increase map range">-</button></div>
     <label><input id="follow" type="checkbox" checked>Follow</label><button id="recenter">Recenter</button>
-    <div class="layers" aria-label="Map layers"><label><input type="checkbox" id="layer-airports" checked>Airports</label><label><input type="checkbox" id="layer-navaids">Navaids</label><label><input type="checkbox" id="layer-fixes">Fixes</label><label><input type="checkbox" id="layer-airspace" checked>Airspace</label></div>
+    <div class="layers" aria-label="Map layers"><label><input type="checkbox" id="layer-airports" checked>Airports</label><label><input type="checkbox" id="layer-navaids">Navaids</label><label><input type="checkbox" id="layer-fixes">Fixes</label><label><input type="checkbox" id="layer-airspace" checked>Airspace</label><label><input type="checkbox" id="layer-flight-plan" checked disabled>Flight Plan</label></div>
   </div>
   <main>
     <section class="map-area" aria-label="Navigation map"><div id="map" tabindex="0" role="application" aria-label="Navigation map; arrow keys pan, plus and minus change range"></div><div class="map-readout"><span id="mapMessage">POSITION UNAVAILABLE</span><span aria-label="True north">N &#8593;</span></div><div class="map-scale" id="scale" hidden><span id="scaleLabel"></span><i id="scaleBar"></i></div></section>
     <aside aria-label="MFD information">
       <section><h2>OWN AIRCRAFT</h2><dl class="telemetry"><div><dt>POSITION</dt><dd id="position">--</dd></div><div><dt>TRUE HEADING</dt><dd id="heading">--</dd></div><div><dt>GROUND TRACK</dt><dd id="track">--</dd></div><div><dt>GROUND SPEED / KT</dt><dd id="speed">--</dd></div></dl></section>
+      <section><h2>FLIGHT PLAN</h2><p id="flightPlanStatus">FLIGHT PLAN INITIALIZING</p><ol class="nearest" id="flightPlanEntries"></ol></section>
       <section><h2>NEAREST AIRPORTS / 100 NM</h2><p id="nearestStatus">POSITION UNAVAILABLE</p><ol class="nearest" id="nearest"></ol></section>
       <section id="detail"><h2>FEATURE DETAILS</h2><p id="detailStatus">NO SELECTION</p><dl id="detailFields"></dl></section>
       <details open><summary>AVIATION DATA</summary><p id="provider">XPLANE / UNAVAILABLE</p><p id="dataError" class="status"></p><button id="reload">Reload data</button><div id="layerMetadata"></div><p class="safety">SIMULATION ONLY. Data may be incomplete or out of date. Airspace activation and flight permissions are not established by this display.</p><a class="safety" href="/static/leaflet/LICENSE">Map library license</a></details>
@@ -112,6 +113,45 @@
         return [longitude, coordinate[1], ...coordinate.slice(2)];
       });
     }
+    function flightPlanGeometry(plan, ownshipPosition, centerLongitude) {
+      function validPosition(position) {
+        return Array.isArray(position) && position.length >= 2 &&
+          Number.isFinite(position[0]) && Number.isFinite(position[1]) &&
+          Math.abs(position[0]) <= 90 && Math.abs(position[1]) <= 180;
+      }
+      function mapCoordinates(positions) {
+        return unwrapLine(positions.map(([latitude, longitude]) => [longitude, latitude]), centerLongitude)
+          .map(([longitude, latitude]) => [latitude, longitude]);
+      }
+      const entries = Array.isArray(plan?.entries) ? plan.entries : [];
+      const positions = entries.map(entry => {
+        const position = [entry.latitude_deg, entry.longitude_deg];
+        return entry.field_status?.position === 'available' && validPosition(position) ? position : null;
+      });
+      const routeSegments = [];
+      let segment = [];
+      for (const position of positions) {
+        if (position) segment.push(position);
+        else {
+          if (segment.length > 1) routeSegments.push(mapCoordinates(segment));
+          segment = [];
+        }
+      }
+      if (segment.length > 1) routeSegments.push(mapCoordinates(segment));
+
+      const activeIndex = Number.isInteger(plan?.active_index) ? plan.active_index : -1;
+      const target = positions[activeIndex];
+      const origin = activeIndex > 0 ? positions[activeIndex - 1] :
+        activeIndex === 0 && validPosition(ownshipPosition) ? ownshipPosition : null;
+      const activeLeg = origin && target ? mapCoordinates([origin, target]) : null;
+      const waypoints = positions.map((position, index) => position ? {
+        index,
+        position: mapCoordinates([position])[0],
+        active: index === activeIndex,
+        identifier: entries[index].identifier || entries[index].type || `Waypoint ${index + 1}`,
+      } : null).filter(Boolean);
+      return {routeSegments, activeLeg, waypoints};
+    }
     function mapFeature(feature, longitude) {
       const geometry = feature.geometry;
       let coordinates;
@@ -136,10 +176,14 @@
       zoomSnap: 0, minZoom: 2, maxZoom: 18, inertia: false, worldCopyJump: true, fadeAnimation: false}).setView([0, 0], 5);
     const geography = L.layerGroup().addTo(map);
     const grid = L.layerGroup().addTo(map);
+    const flightPlanMapLayer = L.layerGroup();
+    const flightPlanLayerToggle = document.getElementById('layer-flight-plan');
     const follow = document.getElementById('follow');
     let ownship = null;
     let ownshipKind = null;
     let currentFlight = null;
+    let flightPlanSnapshot = null;
+    let flightPlanBusy = false;
     let firstPosition = true;
     let metadata = null;
     let featureController = null;
@@ -156,6 +200,70 @@
     let featureViewportKey = null;
     let forceFeatureRefresh = false;
     function text(id, value) { document.getElementById(id).textContent = value; }
+    function drawFlightPlan() {
+      flightPlanMapLayer.clearLayers();
+      if (!flightPlanSnapshot?.available || !flightPlanLayerToggle.checked) {
+        map.removeLayer(flightPlanMapLayer);
+        return;
+      }
+      if (!map.hasLayer(flightPlanMapLayer)) flightPlanMapLayer.addTo(map);
+      const geometry = flightPlanGeometry(
+        flightPlanSnapshot,
+        currentFlight?.position,
+        map.getCenter().lng,
+      );
+      for (const segment of geometry.routeSegments) {
+        L.polyline(segment, {color:'#77c8e8',weight:2,opacity:.8,interactive:false}).addTo(flightPlanMapLayer);
+      }
+      if (geometry.activeLeg) {
+        L.polyline(geometry.activeLeg, {color:'#ffd166',weight:4,opacity:1,interactive:false}).addTo(flightPlanMapLayer);
+      }
+      for (const waypoint of geometry.waypoints) {
+        const marker = L.circleMarker(waypoint.position, {
+          radius: waypoint.active ? 6 : 4,
+          color: waypoint.active ? '#ffd166' : '#77c8e8',
+          fillColor: '#101713',
+          fillOpacity: 1,
+          weight: 2,
+          interactive: false,
+        }).addTo(flightPlanMapLayer);
+        const tooltip = document.createElement('span');
+        tooltip.textContent = `${waypoint.active ? 'ACTIVE / ' : ''}${waypoint.index + 1} ${waypoint.identifier}`;
+        marker.bindTooltip(tooltip);
+      }
+    }
+    function renderFlightPlan(plan, error = '') {
+      const wasAvailable = flightPlanSnapshot?.available === true;
+      flightPlanSnapshot = plan;
+      flightPlanLayerToggle.disabled = !plan?.available;
+      if (plan?.available && !wasAvailable) flightPlanLayerToggle.checked = true;
+      const list = document.getElementById('flightPlanEntries');
+      list.replaceChildren();
+      if (error) {
+        text('flightPlanStatus', `FLIGHT PLAN UNAVAILABLE / ${error}`);
+      } else if (!plan?.available) {
+        text('flightPlanStatus', (plan?.status || 'unavailable').replaceAll('_', ' ').toUpperCase());
+      } else {
+        const active = plan.entries[plan.active_index];
+        text('flightPlanStatus', active ?
+          `${plan.entries.length} ENTRIES / ACTIVE ${active.identifier || active.type}` :
+          `${plan.entries.length} ENTRIES / ACTIVE INDEX UNAVAILABLE`);
+        for (const entry of plan.entries) {
+          const item = document.createElement('li');
+          const label = entry.identifier || entry.type || `Waypoint ${entry.index + 1}`;
+          item.textContent = `${entry.index === plan.active_index ? 'ACTIVE / ' : ''}${label}`;
+          list.append(item);
+        }
+      }
+      drawFlightPlan();
+    }
+    async function loadFlightPlan() {
+      if (flightPlanBusy) return;
+      flightPlanBusy = true;
+      try { renderFlightPlan(await json('/api/flight-plan')); }
+      catch (error) { renderFlightPlan(null, error.message); }
+      finally { flightPlanBusy = false; }
+    }
     function statusMessage() {
       const position = currentFlight?.position ? currentFlight.projectionLimited ? 'POSITION VALID / OUTSIDE MAP LATITUDE' : '' : `POSITION ${(currentFlight?.status || 'unavailable').toUpperCase()}`;
       text('mapMessage', [position, rangeWarning, warning].filter(Boolean).join('\n') || `${document.getElementById('range').value} NM / NORTH UP`);
@@ -364,6 +472,7 @@
         else if (follow.checked) map.panTo(location, {animate:false});
       }
       statusMessage();
+      drawFlightPlan();
       if (view.position) loadNearest();
     }
     async function poll() {
@@ -384,6 +493,7 @@
     document.getElementById('recenter').addEventListener('click', () => { follow.checked = true; if (currentFlight?.position && !currentFlight.projectionLimited) applyRange(L.latLng(currentFlight.position), true); });
     follow.addEventListener('change', () => { if (follow.checked && currentFlight?.position && !currentFlight.projectionLimited) applyRange(L.latLng(currentFlight.position), true); });
     for (const layer of layerNames) document.getElementById(`layer-${layer}`).addEventListener('change', () => queueFeatures(true));
+    flightPlanLayerToggle.addEventListener('change', drawFlightPlan);
     document.getElementById('reload').addEventListener('click', async () => {
       const button = document.getElementById('reload'); button.disabled = true;
       featureController?.abort();
@@ -392,7 +502,7 @@
       finally { await loadMetadata(); button.disabled = false; }
     });
     map.on('dragstart', () => { follow.checked = false; });
-    map.on('moveend', () => { queueFeatures(); if (!rangeApplying) applyRange(); });
+    map.on('moveend', () => { queueFeatures(); drawFlightPlan(); if (!rangeApplying) applyRange(); });
     map.on('resize', () => applyRange());
     document.getElementById('map').addEventListener('keydown', event => {
       const delta = ({ArrowLeft:[-80,0],ArrowRight:[80,0],ArrowUp:[0,-80],ArrowDown:[0,80]})[event.key];
@@ -400,9 +510,9 @@
       else if (event.key === '+' || event.key === '=') { event.preventDefault(); changeRange(-1); }
       else if (event.key === '-') { event.preventDefault(); changeRange(1); }
     });
-    loadMetadata(); applyRange(); poll();
-    const pollTimer = setInterval(poll, 250), metadataTimer = setInterval(loadMetadata, 10000);
-    window.addEventListener('beforeunload', () => { clearInterval(pollTimer); clearInterval(metadataTimer); clearTimeout(queryTimer); featureController?.abort(); });
+    loadMetadata(); applyRange(); poll(); loadFlightPlan();
+    const pollTimer = setInterval(poll, 250), metadataTimer = setInterval(loadMetadata, 10000), flightPlanTimer = setInterval(loadFlightPlan, 5000);
+    window.addEventListener('beforeunload', () => { clearInterval(pollTimer); clearInterval(metadataTimer); clearInterval(flightPlanTimer); clearTimeout(queryTimer); featureController?.abort(); });
   </script>
 </body>
 </html>

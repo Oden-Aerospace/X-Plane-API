@@ -86,19 +86,20 @@ session by re-engaging and confirming the autopilot; the
 
 ### Autopilot MCP server
 
-`xplane-api-mcp` exposes the autopilot panel to MCP agent runtimes over
-stdio. Install the optional extra first: `python -m pip install -e ".[mcp]"`.
-The server is **read-only by default** (`read_autopilot_state`,
-`wait_for_state`); launching with `--allow-control` additionally registers
-`press_button` and `set_selector` and constructs the write-capable client —
-a read-only launch structurally cannot transmit control traffic. Connection
-is explicit and fails fast at launch: give `--host`/`--port` or
-`--discover-timeout-seconds` for beacon discovery, plus the required
-`--frequency-hz` subscription rate.
+`xplane-api-mcp` exposes the autopilot and flight-plan tools to MCP agent
+runtimes over stdio. Install the optional extra first:
+`python -m pip install -e ".[mcp]"`. Autopilot control is off by default;
+`--allow-control` additionally registers `press_button` and `set_selector`.
+Flight-plan direct-to is independently off by default and requires
+`--allow-flight-plan-control`; it registers `direct_to_waypoint` without
+enabling autopilot control. Connection is explicit and fails fast at launch:
+give `--host`/`--port` or `--discover-timeout-seconds` for beacon discovery,
+plus the required `--frequency-hz` subscription rate.
 
 ```sh
-xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5                  # read-only
-xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-control  # with control
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5                              # read-only
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-control              # autopilot control
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-flight-plan-control  # direct-to
 ```
 
 Tool schemas carry the button/selector enums, units, and ranges; tool
@@ -106,6 +107,40 @@ descriptions embed the operating contract (inputs are requests, annunciated
 state is truth), the verified C172 G1000 caveats, and the session-safety
 rule. The server serves one local agent runtime and one simulator and is
 simulation tooling, not certified avionics.
+
+## Active flight plan
+
+The XPLM bridge reads the pilot-side primary plan and exposes its ordered
+entries, active index, units, and per-field availability through
+`GET /api/flight-plan`. If the bridge is not available, the endpoint reports
+an explicit unavailable response. The MCP server provides the matching
+`read_flight_plan` tool. The existing Navigation MFD has a Flight Plan layer,
+enabled by default when plan data is available; its aviation-data provider and
+airport, navaid, fix, and airspace layers remain unchanged.
+
+The HTTP API adds `POST /api/flight-plan/direct-to` with
+`{"identifier":"KSEA"}`. It resolves a unique navigation-database identifier,
+preserves the specified route continuation, or creates a one-waypoint plan
+when no active route exists, and reports success only after the active plan
+confirms the target. Start the web harness with
+`--allow-flight-plan-control` to enable this route. The MCP
+`direct_to_waypoint` tool uses the same client and requires the same-named
+flag; this is separate from `--allow-control`. Direct-to changes the
+simulator's navigation route and may change the aircraft path when NAV/GPSS is
+coupled; it does not send autopilot commands.
+
+The opt-in gates the Python HTTP/MCP surfaces. X-Plane's Web API allows
+connected clients to write datarefs and activate commands, and its documented
+incoming-traffic control is global; direct Web API clients can bypass the
+Python opt-in. This limitation is accepted for this integration. See the
+[X-Plane Web API documentation](https://developer.x-plane.com/article/x-plane-web-api/).
+
+Build and run the native macOS bridge tests with
+`make -C native/flight_plan_bridge all test` (set `SDK_ROOT` if the XPLM SDK
+is outside the workspace's default `.local/xplane-sdk/4.3.0/SDK` location).
+The built plugin is a separate manual X-Plane installation. Live direct-to
+testing still requires separate explicit user consent and a ground-state test
+plan.
 
 ## JSON Lines and playback
 
@@ -285,6 +320,9 @@ plugin paths are not loaded from JSON.
 The `/api/aviation` boundary provides `/status`, `/features?bounds=w,s,e,n&layers=...`,
 `/nearest?lat=...&lon=...`, `/detail?id=...`, and `/range?lat=...&lon=...&nm=...`.
 `POST /api/aviation/reload` accepts only `{}` and reads the configured file.
+`GET /api/flight-plan` returns the active-plan snapshot from the native bridge.
+`POST /api/flight-plan/direct-to` is unavailable unless the dedicated
+flight-plan opt-in is enabled.
 
 Only synthetic geography is included for tests. The configuration
 `tests/fixtures/aviation/public.json` is a fictional preview, not real geography.

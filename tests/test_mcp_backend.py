@@ -14,6 +14,11 @@ from xplane_api.models.autopilot import (
     LateralMode,
     VerticalMode,
 )
+from xplane_api.models.flight_plan import (
+    FlightPlanState,
+    FlightPlanStatus,
+    PlanFieldStatus,
+)
 from xplane_api.models.state import FieldStatus
 
 
@@ -65,6 +70,28 @@ class FakePanel:
             if predicate(state):
                 return ConfirmationResult(satisfied=True, state=state)
         return ConfirmationResult(satisfied=False, state=final)
+
+
+class FakeFlightPlanClient:
+    def __init__(self) -> None:
+        self.read_calls = 0
+        self.direct_to_calls: list[str] = []
+
+    def read_plan(self) -> FlightPlanState:
+        self.read_calls += 1
+        return FlightPlanState(
+            timestamp_utc=datetime(2026, 11, 1, tzinfo=timezone.utc),
+            source="pilot_primary",
+            available=False,
+            status=FlightPlanStatus.NO_ACTIVE_PLAN,
+            active_index=None,
+            active_index_status=PlanFieldStatus.UNAVAILABLE,
+            entries=(),
+        )
+
+    def direct_to(self, identifier: str) -> dict:
+        self.direct_to_calls.append(identifier)
+        return {"status": "confirmed", "target_identifier": identifier}
 
 
 class ParseConditionTests(unittest.TestCase):
@@ -149,6 +176,27 @@ class BackendTests(unittest.TestCase):
             self.panel.read_calls,
             [{"timeout_seconds": 1.0, "stale_after_seconds": 2.0}],
         )
+
+    def test_read_flight_plan_uses_shared_client_and_preserves_unavailable_status(self) -> None:
+        client = FakeFlightPlanClient()
+        backend = AutopilotToolBackend(
+            self.panel,  # type: ignore[arg-type]
+            flight_plan_client=client,  # type: ignore[arg-type]
+        )
+        result = backend.read_flight_plan()
+        self.assertFalse(result["available"])
+        self.assertEqual(result["status"], "no_active_plan")
+        self.assertEqual(client.read_calls, 1)
+
+    def test_direct_to_waypoint_uses_shared_flight_plan_client(self) -> None:
+        client = FakeFlightPlanClient()
+        backend = AutopilotToolBackend(
+            self.panel,  # type: ignore[arg-type]
+            flight_plan_client=client,  # type: ignore[arg-type]
+        )
+        result = backend.direct_to_waypoint("KSEA")
+        self.assertEqual(result["status"], "confirmed")
+        self.assertEqual(client.direct_to_calls, ["KSEA"])
 
     def test_press_button_reports_transmission_only(self) -> None:
         result = self.backend.press_button("HDG")

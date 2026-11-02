@@ -8,9 +8,42 @@ import unittest
 from unittest.mock import patch
 
 from xplane_api.models.state import FlightState
+from xplane_api.models.flight_plan import (
+    FlightPlanState,
+    FlightPlanStatus,
+    PlanFieldStatus,
+)
 from xplane_api.aviation import AviationDataset, layer_metadata
 from xplane_api.recording.jsonl import write_jsonl
+from xplane_api.sources.flight_plan import FlightPlanUnavailableError
 from xplane_api.web import create_server
+
+
+class FakeFlightPlanClient:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.direct_to_calls: list[str] = []
+
+    def read_plan(self) -> FlightPlanState:
+        if self.fail:
+            raise FlightPlanUnavailableError("bridge is not installed")
+        return FlightPlanState(
+            timestamp_utc=datetime(2026, 11, 1, tzinfo=timezone.utc),
+            source="pilot_primary",
+            available=False,
+            status=FlightPlanStatus.NO_ACTIVE_PLAN,
+            active_index=None,
+            active_index_status=PlanFieldStatus.UNAVAILABLE,
+            entries=(),
+        )
+
+    def direct_to(self, identifier: str) -> dict:
+        self.direct_to_calls.append(identifier)
+        return {
+            "status": "confirmed",
+            "target_identifier": identifier.strip().upper(),
+            "active_index": 0,
+        }
 
 
 class LocalHarnessHttpTests(unittest.TestCase):
@@ -47,6 +80,58 @@ class LocalHarnessHttpTests(unittest.TestCase):
         status, body = self.request("GET", "/api/state")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["mode"], "idle")
+
+    def test_reads_flight_plan_and_reports_bridge_failure_explicitly(self) -> None:
+        handler = self.server.RequestHandlerClass
+        handler.flight_plan_client = FakeFlightPlanClient()
+        status, body = self.request("GET", "/api/flight-plan")
+        payload = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["available"])
+        self.assertEqual(payload["status"], "no_active_plan")
+        handler.flight_plan_client = FakeFlightPlanClient(fail=True)
+        status, body = self.request("GET", "/api/flight-plan")
+        payload = json.loads(body)
+        self.assertEqual(status, 503)
+        self.assertFalse(payload["available"])
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertIn("bridge is not installed", payload["error"])
+
+    def test_direct_to_requires_separate_opt_in_and_returns_readback(self) -> None:
+        handler = self.server.RequestHandlerClass
+        client = FakeFlightPlanClient()
+        handler.flight_plan_client = client
+        request = json.dumps({"identifier": "ksea"}).encode()
+
+        status, body = self.request("POST", "/api/flight-plan/direct-to", request)
+        self.assertEqual(status, 403)
+        self.assertIn(b"--allow-flight-plan-control", body)
+        self.assertEqual(client.direct_to_calls, [])
+
+        handler.allow_flight_plan_control = True
+        status, body = self.request("POST", "/api/flight-plan/direct-to", request)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["status"], "confirmed")
+        self.assertEqual(client.direct_to_calls, ["ksea"])
+
+    def test_direct_to_maps_target_errors_without_falling_back_to_success(self) -> None:
+        from xplane_api.sources.flight_plan import FlightPlanTargetError
+
+        class InvalidTargetClient(FakeFlightPlanClient):
+            def direct_to(self, identifier: str) -> dict:
+                del identifier
+                raise FlightPlanTargetError("target is ambiguous")
+
+        handler = self.server.RequestHandlerClass
+        handler.allow_flight_plan_control = True
+        handler.flight_plan_client = InvalidTargetClient()
+        status, body = self.request(
+            "POST",
+            "/api/flight-plan/direct-to",
+            json.dumps({"identifier": "DUP"}).encode(),
+        )
+        self.assertEqual(status, 400)
+        self.assertIn(b"target is ambiguous", body)
 
     def test_loads_versioned_jsonl_recording(self) -> None:
         from io import StringIO

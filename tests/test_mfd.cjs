@@ -23,6 +23,45 @@ test('polygon wrapping uses the nearby world copy instead of crossing the world'
   assert.equal(result[1][0] - result[0][0], 2);
   assert.equal(run('wrapLongitude(541)'), -179);
 });
+test('flight plan geometry preserves route order and highlights the active leg', () => {
+  const plan = {
+    available:true,
+    active_index:1,
+    entries:[
+      {identifier:'KSEA',type:'airport',latitude_deg:47,longitude_deg:-123,field_status:{position:'available'}},
+      {identifier:'SEA',type:'fix',latitude_deg:48,longitude_deg:-122,field_status:{position:'available'}},
+      {identifier:'FIX2',type:'fix',latitude_deg:49,longitude_deg:-121,field_status:{position:'available'}},
+    ],
+  };
+  const geometry = JSON.parse(JSON.stringify(run(`flightPlanGeometry(${JSON.stringify(plan)},[46,-124],-123)`)));
+  assert.equal(geometry.routeSegments.length, 1);
+  assert.deepEqual(geometry.routeSegments[0], [[47,-123],[48,-122],[49,-121]]);
+  assert.deepEqual(geometry.activeLeg, [[47,-123],[48,-122]]);
+  assert.equal(geometry.waypoints[1].active, true);
+});
+test('flight plan geometry uses ownship for the first active leg and breaks at missing positions', () => {
+  const plan = {
+    available:true,
+    active_index:0,
+    entries:[
+      {identifier:'KSEA',type:'airport',latitude_deg:47,longitude_deg:-123,field_status:{position:'available'}},
+      {identifier:'NO POS',type:'fix',latitude_deg:null,longitude_deg:null,field_status:{position:'unavailable'}},
+      {identifier:'FIX2',type:'fix',latitude_deg:49,longitude_deg:-121,field_status:{position:'available'}},
+    ],
+  };
+  const geometry = JSON.parse(JSON.stringify(run(`flightPlanGeometry(${JSON.stringify(plan)},[46,-124],-123)`)));
+  assert.deepEqual(geometry.activeLeg, [[46,-124],[47,-123]]);
+  assert.equal(geometry.routeSegments.length, 0);
+  assert.equal(geometry.waypoints.length, 2);
+});
+test('flight plan layer defaults on without removing existing aviation layers', () => {
+  const control = html.match(/<input type="checkbox" id="layer-flight-plan"[^>]*>/)?.[0];
+  assert.ok(control);
+  assert.match(control, /\bchecked\b/);
+  for (const layer of ['airports', 'navaids', 'fixes', 'airspace']) {
+    assert.match(html, new RegExp(`id="layer-${layer}"`));
+  }
+});
 test('airport labels are prioritized by runway length and decluttered by range', () => {
   const features = [
     {id:'near-strip',geometry:{type:'Point',coordinates:[-77,38]},properties:{layer:'airports',runways:[{length_m:300}]}},
