@@ -87,31 +87,139 @@ session by re-engaging and confirming the autopilot; the
 ### Autopilot MCP server
 
 `xplane-api-mcp` exposes the autopilot and flight-plan tools to MCP agent
-runtimes over stdio. Install the optional extra first:
-`python -m pip install -e ".[mcp]"`. Autopilot control is off by default;
-`--allow-control` additionally registers `press_button` and `set_selector`.
-Flight-plan direct-to is independently off by default and requires
-`--allow-flight-plan-control`; it registers `direct_to_waypoint` without
-enabling autopilot control. The composite `direct_to_and_activate` tool is
-registered only when both flags are set; it confirms the route before
-engaging AP if needed and selecting NAV if neither NAV nor GPSS is active or
-armed. It reports success only after state read-back confirms the target,
-engaged AP, and active NAV/GPSS. Connection is explicit and fails fast at
-launch: give `--host`/`--port` or `--discover-timeout-seconds` for beacon
-discovery, plus the required `--frequency-hz` subscription rate.
+agent runtimes over stdio. Autopilot state and controls use X-Plane's UDP
+interface; **they do not require a custom X-Plane plugin**. Flight-plan
+reading and direct-to additionally require this project's native Flight Plan
+Bridge plugin and X-Plane's local Web API.
+
+#### 1. Enable X-Plane connections
+
+Start X-Plane 12 and enable **Accept incoming connections** in
+**Settings > Network**. The MCP server discovers X-Plane through its beacon
+at startup and reads autopilot state over UDP. Keep X-Plane running before
+starting or restarting the MCP server.
+
+#### 2. Install the Flight Plan Bridge plugin (for flight-plan tools)
+
+This step is optional if you only need autopilot state and controls. The
+bridge exposes the pilot's primary flight plan and the direct-to command to
+X-Plane's local Web API. The Web API is expected at
+`http://127.0.0.1:8086`.
+
+The checked-in plugin build is macOS-only. Install the X-Plane Plugin SDK
+from the [official SDK downloads page](https://developer.x-plane.com/sdk/plugin-sdk-downloads/),
+then, from the repository root, build and run its native tests:
 
 ```sh
-xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5                              # read-only
-xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-control              # autopilot control
-xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-flight-plan-control  # direct-to
-xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-control --allow-flight-plan-control # direct-to + activate
+make -C native/flight_plan_bridge all test
 ```
 
-Tool schemas carry the button/selector enums, units, and ranges; tool
-descriptions embed the operating contract (inputs are requests, annunciated
-state is truth), the verified C172 G1000 caveats, and the session-safety
-rule. The server serves one local agent runtime and one simulator and is
-simulation tooling, not certified avionics.
+The default SDK location is `../.local/xplane-sdk/4.3.0/SDK` relative to the
+repository. If the SDK is elsewhere, pass its `SDK` directory as `SDK_ROOT`:
+
+```sh
+SDK_ROOT="/path/to/SDK" make -C native/flight_plan_bridge all test
+```
+
+Quit X-Plane before installing the built plugin. Replace
+`/path/to/X-Plane 12` below with the simulator's installation directory:
+
+```sh
+mkdir -p "/path/to/X-Plane 12/Resources/plugins/xplane-api-flight-plan-bridge/64"
+cp build/flight-plan-bridge/mac.xpl \
+  "/path/to/X-Plane 12/Resources/plugins/xplane-api-flight-plan-bridge/64/mac.xpl"
+```
+
+Start X-Plane again. Check `Log.txt` in the X-Plane installation directory
+if the plugin does not load. The flight-plan MCP tools should report the
+bridge as available; if they report that the Web API or bridge datarefs are
+unavailable, confirm that X-Plane is running, the plugin loaded, and the
+local Web API is reachable.
+
+#### 3. Install and configure the MCP server
+
+From the repository root, create a Python environment if needed and install
+the package with its optional MCP dependency:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[mcp]"
+```
+
+For a VS Code workspace rooted at this repository, create
+`.vscode/mcp.json` with the following read-only configuration:
+
+```json
+{
+  "servers": {
+    "xplane-autopilot": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "-m",
+        "xplane_api.mcp.server",
+        "--discover-timeout-seconds",
+        "3",
+        "--frequency-hz",
+        "5"
+      ],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
+```
+
+The command above is for macOS/Linux. On Windows, use
+`${workspaceFolder}\\.venv\\Scripts\\python.exe` for `command` and keep the
+other fields the same. Alternatively, run `xplane-api-mcp` directly after
+installing the package into the active environment.
+
+In VS Code, open the MCP server controls and start `xplane-autopilot`. After
+changing this configuration, restart the server. It connects to X-Plane when
+it starts; a startup discovery failure must be fixed before tools are
+available. To connect without beacon discovery, replace
+`"--discover-timeout-seconds", "3"` in `args` with
+`"--host", "127.0.0.1", "--port", "49000"` (use the simulator's actual
+address and UDP port). `--frequency-hz` is required in either case.
+
+#### 4. Enable only the controls you need
+
+The configuration above is read-only. Add flags to the `args` array only
+when you intend to permit writes:
+
+- `--allow-control` registers autopilot button and selector controls.
+- `--allow-flight-plan-control` registers route-only
+  `direct_to_waypoint`; it does not enable autopilot controls.
+- **Both flags** register `direct_to_and_activate`, which confirms the route,
+  engages AP if needed, selects NAV only if NAV/GPSS is neither active nor
+  armed, and verifies the final state.
+
+For example, to enable both control surfaces, append these two strings to
+`args`:
+
+```json
+"--allow-control",
+"--allow-flight-plan-control"
+```
+
+Direct-to may change the aircraft's path when NAV/GPSS is coupled. The
+composite tool leaves vertical modes and targets unchanged. Successful
+button/selector transmission alone is not proof of the resulting state;
+confirm the annunciated state through the read-back tools. See
+[docs/autopilot-agent-api.md](docs/autopilot-agent-api.md) for mode behavior,
+tool contracts, and safety guidance.
+
+```sh
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-control
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-flight-plan-control
+xplane-api-mcp --discover-timeout-seconds 3 --frequency-hz 5 --allow-control --allow-flight-plan-control
+```
+
+These command-line examples provide the same read-only, autopilot-only,
+flight-plan-only, and combined configurations when running the server
+directly instead of through VS Code. The server serves one local agent
+runtime and one simulator and is simulation tooling, not certified avionics.
 
 ## Active flight plan
 
@@ -130,9 +238,10 @@ when no active route exists, and reports success only after the active plan
 confirms the target. Start the web harness with
 `--allow-flight-plan-control` to enable this route. The MCP
 `direct_to_waypoint` tool uses the same client and requires the same-named
-flag; this is separate from `--allow-control`. Direct-to changes the
-simulator's navigation route and may change the aircraft path when NAV/GPSS is
-coupled; it does not send autopilot commands.
+flag; this is separate from `--allow-control`. See the MCP setup steps above
+for building and installing the native bridge. Direct-to changes the
+simulator's navigation route and may change the aircraft path when NAV/GPSS
+is coupled; it does not send autopilot commands.
 
 When both control flags are enabled, MCP also provides
 `direct_to_and_activate(identifier, timeout_seconds, poll_interval_seconds,
@@ -149,13 +258,6 @@ connected clients to write datarefs and activate commands, and its documented
 incoming-traffic control is global; direct Web API clients can bypass the
 Python opt-in. This limitation is accepted for this integration. See the
 [X-Plane Web API documentation](https://developer.x-plane.com/article/x-plane-web-api/).
-
-Build and run the native macOS bridge tests with
-`make -C native/flight_plan_bridge all test` (set `SDK_ROOT` if the XPLM SDK
-is outside the workspace's default `.local/xplane-sdk/4.3.0/SDK` location).
-The built plugin is a separate manual X-Plane installation. Live direct-to
-testing still requires separate explicit user consent and a ground-state test
-plan.
 
 ## JSON Lines and playback
 
